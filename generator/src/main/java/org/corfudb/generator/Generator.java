@@ -24,7 +24,7 @@ import static java.util.concurrent.Executors.newWorkStealingPool;
  */
 public class Generator {
     public static void main(String[] args) {
-        String endPoint = args[0];
+               String endPoint = args[0];
         int numStreams = Integer.parseInt(args[1]);
         int numKeys = Integer.parseInt(args[2]);
         long cpPeriod = Long.parseLong(args[3]);

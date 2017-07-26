@@ -1,7 +1,10 @@
 package org.corfudb.generator.operations;
 
+import ch.qos.logback.classic.Logger;
 import lombok.extern.slf4j.Slf4j;
 import org.corfudb.generator.State;
+import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Random;
@@ -12,6 +15,8 @@ import java.util.Random;
 @Slf4j
 public class SnapshotTxOperation extends Operation {
 
+    Logger correctness = (Logger) LoggerFactory.getLogger("correctness");
+
     public SnapshotTxOperation(State state) {
         super(state);
     }
@@ -21,6 +26,8 @@ public class SnapshotTxOperation extends Operation {
         long trimMark = state.getTrimMark();
         Random rand = new Random();
         long delta = (long) rand.nextInt(10) + 1;
+
+        correctness.info("TxSnap, start");
         state.startSnapshotTx(trimMark + delta);
 
         int numOperations = state.getOperationCount().sample(1).get(0);
@@ -30,13 +37,20 @@ public class SnapshotTxOperation extends Operation {
             if (operations.get(x) instanceof OptimisticTxOperation
                     || operations.get(x) instanceof SnapshotTxOperation
                     || operations.get(x) instanceof RemoveOperation
-                    || operations.get(x) instanceof WriteOperation) {
+                    || operations.get(x) instanceof WriteOperation
+                    || operations.get(x) instanceof NestedTxOperation) {
                 continue;
             }
 
             operations.get(x).execute();
         }
+        try {
+            state.stopSnapshotTx();
+        } catch (TransactionAbortedException tae) {
+            correctness.info("TxSnap, aborted");
+            throw tae;
+        }
 
-        state.stopSnapshotTx();
+        correctness.info("TxSnap, end");
     }
 }

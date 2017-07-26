@@ -3,16 +3,18 @@ package org.corfudb.generator;
 import com.google.common.reflect.TypeToken;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import lombok.RequiredArgsConstructor;
 import org.corfudb.generator.distributions.Keys;
 import org.corfudb.generator.distributions.OperationCount;
 import org.corfudb.generator.distributions.Operations;
 import org.corfudb.generator.distributions.Streams;
 import org.corfudb.runtime.CorfuRuntime;
-import org.corfudb.runtime.collections.SMRMap;
+import org.corfudb.runtime.collections.CorfuTable;
 import org.corfudb.runtime.object.transactions.TransactionType;
 
 import lombok.Getter;
@@ -24,6 +26,21 @@ import lombok.Setter;
  * Created by maithem on 7/14/17.
  */
 public class State {
+
+    @RequiredArgsConstructor
+    public enum StringIndexer implements
+            CorfuTable.IndexSpecification<String, String, String, String> {
+        BY_VALUE((k,v) -> Collections.singleton(v)),
+        BY_FIRST_CHAR((k, v) -> Collections.singleton(Character.toString(v.charAt(0))))
+        ;
+
+        @Getter
+        final CorfuTable.IndexFunction<String, String, String> indexFunction;
+
+        @Getter
+        final CorfuTable.ProjectionFunction<String, String, String, String> projectionFunction
+                = (i, s) -> s.map(entry -> entry.getValue());
+    }
 
     @Getter
     final Streams streams;
@@ -41,7 +58,7 @@ public class State {
     final CorfuRuntime runtime;
 
     @Getter
-    final Map<UUID, SMRMap> maps;
+    final Map<UUID, CorfuTable> maps;
 
     @Getter
     @Setter
@@ -66,10 +83,12 @@ public class State {
 
     private void openObjects() {
         for (UUID uuid : streams.getDataSet()) {
-            SMRMap<UUID, UUID> map = runtime.getObjectsView()
+            CorfuTable<String, String, StringIndexer, String> map = runtime.getObjectsView()
                     .build()
                     .setStreamID(uuid)
-                    .setTypeToken(new TypeToken<SMRMap<UUID,UUID>>() {})
+                    .setTypeToken(new TypeToken<CorfuTable<String, String,
+                            StringIndexer, String>>() {})
+                    .setArguments(StringIndexer.class)
                     .open();
 
             maps.put(uuid, map);
@@ -84,7 +103,7 @@ public class State {
         return maps.get(uuid);
     }
 
-    public Collection<SMRMap> getMaps() {
+    public Collection<CorfuTable> getMaps() {
         return maps.values();
     }
 
@@ -92,8 +111,8 @@ public class State {
         runtime.getObjectsView().TXBegin();
     }
 
-    public void stopOptimisticTx() {
-        runtime.getObjectsView().TXEnd();
+    public long stopOptimisticTx() {
+        return runtime.getObjectsView().TXEnd();
     }
 
     public void startSnapshotTx(long snapshot) {
@@ -104,7 +123,7 @@ public class State {
                 .begin();
     }
 
-    public void stopSnapshotTx() {
-        runtime.getObjectsView().TXEnd();
+    public long stopSnapshotTx() {
+        return runtime.getObjectsView().TXEnd();
     }
 }

@@ -23,6 +23,7 @@ import org.corfudb.runtime.object.ICorfuSMRAccess;
 import org.corfudb.runtime.object.ICorfuSMRProxy;
 import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
 import org.corfudb.runtime.object.VersionLockedObject;
+import org.corfudb.runtime.view.Address;
 import org.corfudb.util.Utils;
 
 /**
@@ -101,8 +102,15 @@ public abstract class AbstractTransactionalContext implements
     /**
      * The global-log position that the transaction snapshots in all reads.
      */
-    @Getter(lazy = true)
-    private final long snapshotTimestamp = obtainSnapshotTimestamp();
+    private long snapshotTimestamp = Address.NEVER_READ;
+
+    public long getSnapshotTimestamp(){
+        if (snapshotTimestamp == Address.NEVER_READ) {
+            snapshotTimestamp = obtainSnapshotTimestamp();
+        }
+        return snapshotTimestamp;
+    }
+
 
 
     /**

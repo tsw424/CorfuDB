@@ -11,6 +11,7 @@ import org.corfudb.generator.operations.SnapshotTxOperation;
 import org.corfudb.generator.operations.WriteOperation;
 
 import java.util.List;
+import java.util.Random;
 
 /**
  * This class implements a distribution of all possible operations that the generator
@@ -20,6 +21,7 @@ import java.util.List;
  */
 public class Operations implements DataSet {
 
+    private Random rand = new Random();
     final List<Operation> allOperations;
 
     public Operations(State state) {
@@ -30,10 +32,16 @@ public class Operations implements DataSet {
                 new SnapshotTxOperation(state),
                 new SleepOperation(state),
                 new RemoveOperation(state));
+//              TODO: Fix nestedTx path to enable it
+//              new NestedTxOperation(state));
     }
 
     public void populate() {
         //no-op
+    }
+
+    public Operation getRandomOperation() {
+        return allOperations.get(rand.nextInt(allOperations.size()));
     }
 
     public List<Operation> getDataSet() {
