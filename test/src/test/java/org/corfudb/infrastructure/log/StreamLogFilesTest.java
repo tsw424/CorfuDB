@@ -235,7 +235,7 @@ public class StreamLogFilesTest extends AbstractCorfuTest {
         log.trim(address);
 
         // Verify that the unwritten address trim is not persisted
-        StreamLogFiles.SegmentHandle sh = log.getSegmentHandleForAddress(address);
+        SegmentHandle sh = log.getSegmentHandleForAddress(address);
         assertThat(sh.getPendingTrims().size()).isEqualTo(0);
 
         // Write to the same address
@@ -285,7 +285,7 @@ public class StreamLogFilesTest extends AbstractCorfuTest {
 
         log.compact();
 
-        StreamLogFiles.SegmentHandle sh = log.getSegmentHandleForAddress(logChunk);
+        SegmentHandle sh = log.getSegmentHandleForAddress(logChunk);
 
         assertThat(logChunk).isGreaterThan(StreamLogFiles.TRIM_THRESHOLD);
         assertThat(sh.getPendingTrims().size()).isEqualTo(logChunk);
@@ -385,8 +385,8 @@ public class StreamLogFilesTest extends AbstractCorfuTest {
         long trimAddress = endSegment * StreamLogFiles.RECORDS_PER_LOG_FILE + 1;
 
         // Get references to the segments that will be trimmed
-        Set<StreamLogFiles.SegmentHandle> trimmedHandles = new HashSet();
-        for (StreamLogFiles.SegmentHandle sh : ((StreamLogFiles)log).getSegmentHandles()) {
+        Set<SegmentHandle> trimmedHandles = new HashSet();
+        for (SegmentHandle sh : ((StreamLogFiles)log).getSegmentHandles()) {
             if (sh.getSegment() < endSegment) {
                 trimmedHandles.add(sh);
             }
@@ -428,7 +428,7 @@ public class StreamLogFilesTest extends AbstractCorfuTest {
         }
 
         // Verify that the trimmed segment channels are closed
-        for (StreamLogFiles.SegmentHandle sh : trimmedHandles) {
+        for (SegmentHandle sh : trimmedHandles) {
             assertThat(sh.getLogChannel().isOpen()).isFalse();
             assertThat(sh.getPendingTrimChannel().isOpen()).isFalse();
             assertThat(sh.getTrimmedChannel().isOpen()).isFalse();

@@ -25,9 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -41,8 +39,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import javax.annotation.Nullable;
 
-import lombok.Data;
-import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 
 import org.apache.commons.io.FileUtils;
@@ -686,29 +682,20 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
      * @param address The address of the entry.
      * @return The log unit entry at that address, or NULL if there was no entry.
      */
-    private LogData  readRecord(SegmentHandle sh, long address)
+    private LogData readRecord(SegmentHandle sh, long address)
             throws IOException {
-        FileChannel fc = null;
+        FileChannel fc = sh.getReadChannel();
+        AddressMetaData metaData = sh.getKnownAddresses().get(address);
+        if (metaData == null) {
+            return null;
+        }
+
         try {
-            fc = getChannel(sh.fileName, true);
-            AddressMetaData metaData = sh.getKnownAddresses().get(address);
-            if (metaData == null) {
-                return null;
-            }
-
-            fc.position(metaData.offset);
-
-            try {
-                ByteBuffer entryBuf = ByteBuffer.allocate(metaData.length);
-                fc.read(entryBuf);
-                return getLogData(LogEntry.parseFrom(entryBuf.array()));
-            } catch (InvalidProtocolBufferException e) {
-                throw new DataCorruptionException();
-            }
-        } finally {
-            if (fc != null) {
-                fc.close();
-            }
+            ByteBuffer entryBuf = ByteBuffer.allocate(metaData.length);
+            fc.read(entryBuf, metaData.offset);
+            return getLogData(LogEntry.parseFrom(entryBuf.array()));
+        } catch (InvalidProtocolBufferException e) {
+            throw new DataCorruptionException();
         }
     }
 
@@ -755,16 +742,18 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
                     verify = false;
                 }
 
-                FileChannel fc1 = getChannel(a, false);
-                FileChannel fc2 = getChannel(getTrimmedFilePath(a), false);
-                FileChannel fc3 = getChannel(getPendingTrimsFilePath(a), false);
+                FileChannel logChannel = getChannel(a, false);
+                FileChannel readChannel = getChannel(a, true);
+                FileChannel trimmedChannel = getChannel(getTrimmedFilePath(a), false);
+                FileChannel pendingTrimChannel = getChannel(getPendingTrimsFilePath(a), false);
 
-                if (fc1.size() == 0) {
-                    writeHeader(fc1, VERSION, verify);
+                if (logChannel.size() == 0) {
+                    writeHeader(logChannel, VERSION, verify);
                     log.trace("Opened new segment file, writing header for {}", a);
                 }
                 log.trace("Opened new log file at {}", a);
-                SegmentHandle sh = new SegmentHandle(segment, fc1, fc2, fc3, a);
+                SegmentHandle sh = new SegmentHandle(segment, logChannel, readChannel,
+                        trimmedChannel, pendingTrimChannel, a);
                 // The first time we open a file we should read to the end, to load the
                 // map of entries we already have.
                 readAddressSpace(sh);
@@ -1037,59 +1026,6 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
 
         public Collection<LogEntry> getEntries() {
             return entries;
-        }
-    }
-
-    /**
-     * A SegmentHandle is a range view of consecutive addresses in the log. It contains
-     * the address space along with metadata like addresses that are trimmed and pending trims.
-     */
-
-    @Data
-    class SegmentHandle {
-        private final long segment;
-        @NonNull
-        private final FileChannel logChannel;
-        @NonNull
-        private final FileChannel trimmedChannel;
-        @NonNull
-        private final FileChannel pendingTrimChannel;
-        @NonNull
-        private String fileName;
-
-        private Map<Long, AddressMetaData> knownAddresses = new ConcurrentHashMap();
-        private Set<Long> trimmedAddresses = Collections.newSetFromMap(new ConcurrentHashMap<>());
-        private Set<Long> pendingTrims = Collections.newSetFromMap(new ConcurrentHashMap<>());
-        private volatile int refCount = 0;
-
-
-        public synchronized void retain() {
-            refCount++;
-        }
-
-        public synchronized void release() {
-            if (refCount == 0) {
-                throw new IllegalStateException("refCount cannot be less than 0, segment " + segment);
-            }
-            refCount--;
-        }
-
-        public void close() {
-            Set<FileChannel> channels =
-                    new HashSet(Arrays.asList(logChannel, trimmedChannel, pendingTrimChannel));
-            for (FileChannel channel : channels) {
-                try {
-                    channel.force(true);
-                    channel.close();
-                    channel = null;
-                } catch (Exception e) {
-                    log.warn("Error closing channel {}: {}", channel.toString(), e.toString());
-                }
-            }
-
-            knownAddresses = null;
-            trimmedAddresses = null;
-            pendingTrims = null;
         }
     }
 }
