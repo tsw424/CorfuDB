@@ -793,4 +793,77 @@ public class ManagementViewTest extends AbstractViewTest {
         }
 
     }
+
+    @Test
+    public void testAddNode() throws Exception {
+        addServer(SERVERS.PORT_0);
+        addServer(SERVERS.PORT_1);
+
+        Layout l1 = new TestLayoutBuilder()
+                .setEpoch(0L)
+                .addLayoutServer(SERVERS.PORT_0)
+                .addSequencer(SERVERS.PORT_0)
+                .buildSegment()
+                .buildStripe()
+                .addLogUnit(SERVERS.PORT_0)
+                .addToSegment()
+                .addToLayout()
+                .build();
+        bootstrapAllServers(l1);
+
+        CorfuRuntime rt = new CorfuRuntime(SERVERS.ENDPOINT_0).connect();
+        rt.getRouter(SERVERS.ENDPOINT_0).getClient(ManagementClient.class)
+                .addNodeRequest(SERVERS.ENDPOINT_1,
+                        true,
+                        true,
+                        true,
+                        false,
+                        0).get();
+        rt.invalidateLayout();
+        Layout layoutPhase2 = rt.layout.get();
+
+        Layout l2 = new TestLayoutBuilder()
+                .setEpoch(1L)
+                .addLayoutServer(SERVERS.PORT_0)
+                .addLayoutServer(SERVERS.PORT_1)
+                .addSequencer(SERVERS.PORT_0)
+                .addSequencer(SERVERS.PORT_1)
+                .buildSegment()
+                .setStart(0L)
+                .setEnd(0L)
+                .buildStripe()
+                .addLogUnit(SERVERS.PORT_0)
+                .addToSegment()
+                .addToLayout()
+                .buildSegment()
+                .setStart(1L)
+                .setEnd(-1L)
+                .buildStripe()
+                .addLogUnit(SERVERS.PORT_0)
+                .addLogUnit(SERVERS.PORT_1)
+                .addToSegment()
+                .addToLayout()
+                .build();
+        assertThat(l2.asJSONString()).isEqualTo(layoutPhase2.asJSONString());
+
+        rt.getRouter(SERVERS.ENDPOINT_0).getClient(ManagementClient.class)
+                .mergeSegmentsRequest().get();
+        rt.invalidateLayout();
+        Layout layoutPhase3 = rt.layout.get();
+
+        Layout l3 = new TestLayoutBuilder()
+                .setEpoch(2L)
+                .addLayoutServer(SERVERS.PORT_0)
+                .addLayoutServer(SERVERS.PORT_1)
+                .addSequencer(SERVERS.PORT_0)
+                .addSequencer(SERVERS.PORT_1)
+                .buildSegment()
+                .buildStripe()
+                .addLogUnit(SERVERS.PORT_0)
+                .addLogUnit(SERVERS.PORT_1)
+                .addToSegment()
+                .addToLayout()
+                .build();
+        assertThat(l3.asJSONString()).isEqualTo(layoutPhase3.asJSONString());
+    }
 }

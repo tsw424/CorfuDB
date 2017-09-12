@@ -8,10 +8,7 @@ import java.util.concurrent.CompletableFuture;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.corfudb.protocols.wireprotocol.CorfuMsg;
-import org.corfudb.protocols.wireprotocol.CorfuMsgType;
-import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
-import org.corfudb.protocols.wireprotocol.FailureDetectorMsg;
+import org.corfudb.protocols.wireprotocol.*;
 import org.corfudb.runtime.exceptions.AlreadyBootstrappedException;
 import org.corfudb.runtime.exceptions.NoBootstrapException;
 import org.corfudb.runtime.view.Layout;
@@ -90,6 +87,21 @@ public class ManagementClient implements IClient {
     public CompletableFuture<Boolean> initiateFailureHandler() {
         return router.sendMessageAndGetCompletable(CorfuMsgType.MANAGEMENT_START_FAILURE_HANDLER
                 .msg());
+    }
+
+    public CompletableFuture<Boolean> addNodeRequest(String endpoint,
+                                                     boolean isLayoutServer,
+                                                     boolean isSequencerServer,
+                                                     boolean isLogUnitServer,
+                                                     boolean isUnresponsiveServer,
+                                                     int logUnitStripeIndex) {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.ADD_NODE_REQUEST.payloadMsg(
+                new AddNodeRequest(endpoint, isLayoutServer, isSequencerServer, isLogUnitServer,
+                        isUnresponsiveServer, logUnitStripeIndex)));
+    }
+
+    public CompletableFuture<Boolean> mergeSegmentsRequest() {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.MERGE_SEGMENTS_REQUEST.msg());
     }
 
     /**

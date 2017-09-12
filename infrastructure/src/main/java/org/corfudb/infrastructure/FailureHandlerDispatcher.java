@@ -1,5 +1,6 @@
 package org.corfudb.infrastructure;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -7,9 +8,11 @@ import java.util.concurrent.ExecutionException;
 
 import lombok.extern.slf4j.Slf4j;
 
+import org.corfudb.protocols.wireprotocol.AddNodeRequest;
 import org.corfudb.recovery.FastObjectLoader;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.clients.LogUnitClient;
+import org.corfudb.runtime.exceptions.LayoutModificationException;
 import org.corfudb.runtime.exceptions.OutrankedException;
 import org.corfudb.runtime.exceptions.QuorumUnreachableException;
 import org.corfudb.runtime.exceptions.RecoveryException;
@@ -29,6 +32,59 @@ public class FailureHandlerDispatcher {
      */
     private volatile long prepareRank = 1;
 
+    public long addNode(Layout currentLayout, CorfuRuntime corfuRuntime,
+                        AddNodeRequest addNodeRequest)
+            throws CloneNotSupportedException, QuorumUnreachableException, OutrankedException {
+
+
+        currentLayout.setRuntime(corfuRuntime);
+        sealEpoch(currentLayout);
+
+        long maxGlobalTail = 0L;
+
+        LayoutWorkflowManager layoutWorkflowManager = new LayoutWorkflowManager(currentLayout);
+        if (addNodeRequest.isLayoutServer()) {
+            layoutWorkflowManager.addLayoutServer(addNodeRequest.getEndpoint());
+        }
+        if (addNodeRequest.isSequencerServer()) {
+            layoutWorkflowManager.addSequencerServer(addNodeRequest.getEndpoint());
+        }
+        if (addNodeRequest.isLogUnitServer()) {
+            maxGlobalTail = getMaxGlobalTail(corfuRuntime, currentLayout);
+            layoutWorkflowManager.addLogunitServer(addNodeRequest.getLogUnitStripeIndex(),
+                    maxGlobalTail,
+                    addNodeRequest.getEndpoint());
+        }
+        if (addNodeRequest.isUnresponsiveServer()) {
+            layoutWorkflowManager.addUnresponsiveServers(
+                    Collections.singleton(addNodeRequest.getEndpoint()));
+        }
+        Layout newLayout = layoutWorkflowManager.build();
+        newLayout.setRuntime(corfuRuntime);
+
+        attemptConsensus(newLayout, corfuRuntime);
+
+        return maxGlobalTail;
+    }
+
+    public boolean mergeSegments(Layout currentLayout, CorfuRuntime corfuRuntime)
+            throws CloneNotSupportedException, QuorumUnreachableException,
+            LayoutModificationException, OutrankedException {
+
+        currentLayout.setRuntime(corfuRuntime);
+        sealEpoch(currentLayout);
+
+        LayoutWorkflowManager layoutWorkflowManager = new LayoutWorkflowManager(currentLayout);
+        Layout newLayout = layoutWorkflowManager
+                .mergePreviousSegment(currentLayout.getSegments().size() - 1)
+                .build();
+        newLayout.setRuntime(corfuRuntime);
+
+        attemptConsensus(newLayout, corfuRuntime);
+
+        return true;
+    }
+
     /**
      * Recover cluster from layout.
      *
@@ -46,25 +102,11 @@ public class FailureHandlerDispatcher {
             // Attempts to update all the layout servers with the modified layout.
             while (true) {
                 try {
-                    corfuRuntime.getLayoutView().updateLayout(recoveryLayout, prepareRank);
-                    prepareRank++;
+                    attemptConsensus(recoveryLayout, corfuRuntime);
                 } catch (OutrankedException oe) {
-                    // Update rank since outranked.
-                    log.error("Retrying layout update with higher rank: {}", oe);
-                    // Update rank to be able to outrank other competition and complete paxos.
-                    prepareRank = oe.getNewRank() + 1;
                     continue;
                 }
                 break;
-            }
-
-            // Check if our proposed layout got selected and committed.
-            corfuRuntime.invalidateLayout();
-            if (corfuRuntime.getLayoutView().getLayout().equals(recoveryLayout)) {
-                log.info("Layout Recovered = {}", recoveryLayout);
-            } else {
-                log.warn("Layout recovered with a different layout = {}",
-                        corfuRuntime.getLayoutView().getLayout());
             }
 
             //TODO: Since sequencer reset is moved after paxos. Make sure the runtime has the latest
@@ -104,24 +146,9 @@ public class FailureHandlerDispatcher {
             currentLayout.setRuntime(corfuRuntime);
             sealEpoch(currentLayout);
 
-            // Attempts to update all the layout servers with the modified layout.
             try {
-                corfuRuntime.getLayoutView().updateLayout(newLayout, prepareRank);
-                prepareRank++;
-            } catch (OutrankedException oe) {
-                // Update rank since outranked.
-                log.error("Conflict in updating layout by failureHandlerDispatcher: {}", oe);
-                // Update rank to be able to outrank other competition and complete paxos.
-                prepareRank = oe.getNewRank() + 1;
-            }
-
-            // Check if our proposed layout got selected and committed.
-            corfuRuntime.invalidateLayout();
-            if (corfuRuntime.getLayoutView().getLayout().equals(newLayout)) {
-                log.info("Failed node removed. New Layout committed = {}", newLayout);
-            } else {
-                log.warn("Layout recovered with a different layout = {}",
-                        corfuRuntime.getLayoutView().getLayout());
+                attemptConsensus(newLayout, corfuRuntime);
+            } catch (OutrankedException ignore) {
             }
 
             //TODO: Since sequencer reset is moved after paxos. Make sure the runtime has the latest
@@ -146,6 +173,30 @@ public class FailureHandlerDispatcher {
         layout.moveServersToEpoch();
     }
 
+    private void attemptConsensus(Layout layout, CorfuRuntime corfuRuntime)
+            throws OutrankedException, QuorumUnreachableException {
+        // Attempts to update all the layout servers with the modified layout.
+        try {
+            corfuRuntime.getLayoutView().updateLayout(layout, prepareRank);
+            prepareRank++;
+        } catch (OutrankedException oe) {
+            // Update rank since outranked.
+            log.error("Conflict in updating layout by failureHandlerDispatcher: {}", oe);
+            // Update rank to be able to outrank other competition and complete paxos.
+            prepareRank = oe.getNewRank() + 1;
+            throw oe;
+        }
+
+        // Check if our proposed layout got selected and committed.
+        corfuRuntime.invalidateLayout();
+        if (corfuRuntime.getLayoutView().getLayout().equals(layout)) {
+            log.info("New Layout Committed = {}", layout);
+        } else {
+            log.warn("Runtime recovered with a different layout = {}",
+                    corfuRuntime.getLayoutView().getLayout());
+        }
+    }
+
     /**
      * Reconfigures the servers in the new layout if reconfiguration required.
      *
@@ -162,6 +213,28 @@ public class FailureHandlerDispatcher {
         reconfigureSequencerServers(runtime, originalLayout, newLayout, forceReconfigure);
 
         // TODO: Reconfigure log units if new log unit added.
+    }
+
+    private long getMaxGlobalTail(CorfuRuntime runtime, Layout layout) {
+        long maxTokenRequested = 0;
+        for (Layout.LayoutSegment segment : layout.getSegments()) {
+            // Query the tail of every log unit in every stripe.
+            for (Layout.LayoutStripe stripe : segment.getStripes()) {
+                for (String logServer : stripe.getLogServers()) {
+                    try {
+                        long tail = runtime.getRouter(logServer).getClient(LogUnitClient
+                                .class).getTail().get();
+                        if (tail != 0) {
+                            maxTokenRequested = maxTokenRequested > tail ? maxTokenRequested
+                                    : tail;
+                        }
+                    } catch (Exception e) {
+                        log.error("Exception while fetching log unit tail : {}", e);
+                    }
+                }
+            }
+        }
+        return maxTokenRequested;
     }
 
     /**
@@ -183,24 +256,7 @@ public class FailureHandlerDispatcher {
         if (forceReconfigure
                 || !originalLayout.getSequencers().get(0).equals(newLayout.getSequencers()
                 .get(0))) {
-            long maxTokenRequested = 0;
-            for (Layout.LayoutSegment segment : originalLayout.getSegments()) {
-                // Query the tail of every log unit in every stripe.
-                for (Layout.LayoutStripe stripe : segment.getStripes()) {
-                    for (String logServer : stripe.getLogServers()) {
-                        try {
-                            long tail = runtime.getRouter(logServer).getClient(LogUnitClient
-                                    .class).getTail().get();
-                            if (tail != 0) {
-                                maxTokenRequested = maxTokenRequested > tail ? maxTokenRequested
-                                        : tail;
-                            }
-                        } catch (Exception e) {
-                            log.error("Exception while fetching log unit tail : {}", e);
-                        }
-                    }
-                }
-            }
+            long maxTokenRequested = getMaxGlobalTail(runtime, originalLayout);
 
             try {
 
@@ -232,6 +288,7 @@ public class FailureHandlerDispatcher {
 
     /**
      * Verifies whether there are any invalid streamTails.
+     *
      * @param streamTails Stream tails map obtained from the fastSMRLoader.
      */
     private void verifyStreamTailsMap(Map<UUID, Long> streamTails) {

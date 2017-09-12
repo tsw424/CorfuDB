@@ -19,13 +19,19 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.format.Types.NodeMetrics;
+import org.corfudb.protocols.wireprotocol.AddNodeRequest;
 import org.corfudb.protocols.wireprotocol.CorfuMsg;
 import org.corfudb.protocols.wireprotocol.CorfuMsgType;
 import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
 import org.corfudb.protocols.wireprotocol.FailureDetectorMsg;
 import org.corfudb.runtime.CorfuRuntime;
+import org.corfudb.runtime.clients.IClientRouter;
+import org.corfudb.runtime.clients.LayoutClient;
 import org.corfudb.runtime.clients.ManagementClient;
 import org.corfudb.runtime.clients.SequencerClient;
+import org.corfudb.runtime.exceptions.LayoutModificationException;
+import org.corfudb.runtime.exceptions.OutrankedException;
+import org.corfudb.runtime.exceptions.QuorumUnreachableException;
 import org.corfudb.runtime.view.Layout;
 
 /**
@@ -101,6 +107,7 @@ public class ManagementServer extends AbstractServer {
 
     /**
      * Returns new ManagementServer.
+     *
      * @param serverContext context object providing parameters and objects
      */
     public ManagementServer(ServerContext serverContext) {
@@ -334,6 +341,78 @@ public class ManagementServer extends AbstractServer {
             r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
         } catch (CloneNotSupportedException e) {
             log.error("Failure Handler could not clone layout: {}", e);
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+        }
+    }
+
+    @ServerHandler(type = CorfuMsgType.ADD_NODE_REQUEST, opTimer = metricsPrefix + "add-node")
+    public synchronized void handleAddNodeRequest(CorfuPayloadMsg<AddNodeRequest> msg,
+                                                  ChannelHandlerContext ctx, IServerRouter r,
+                                                  boolean isMetricsEnabled) {
+        if (isShutdown()) {
+            log.warn("Management Server received {} but is shutdown.", msg.getMsgType().toString());
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            return;
+        }
+        // This server has not been bootstrapped yet, ignore all requests.
+        if (!checkBootstrap(msg, ctx, r)) {
+            return;
+        }
+
+        log.info("Received add node request: {}", msg.getPayload());
+
+        // Bootstrap the to-be added node with the old layout.
+        IClientRouter newEndpointRouter = getCorfuRuntime().getRouter(msg.getPayload()
+                .getEndpoint());
+        try {
+            // Ignoring call result as the call returns ACK or throws an exception.
+            newEndpointRouter.getClient(LayoutClient.class).bootstrapLayout(latestLayout).get();
+            newEndpointRouter.getClient(ManagementClient.class)
+                    .bootstrapManagement(latestLayout).get();
+            newEndpointRouter.getClient(ManagementClient.class).initiateFailureHandler().get();
+
+            log.info("handleAddNodeRequest: New node {} bootstrapped.",
+                    msg.getPayload().getEndpoint());
+        } catch (Exception e) {
+            log.error("handleAddNodeRequest: Aborting as new node could not be bootstrapped : ", e);
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            return;
+        }
+
+        try {
+            failureHandlerDispatcher.addNode((Layout) latestLayout.clone(), getCorfuRuntime(),
+                    msg.getPayload());
+            safeUpdateLayout(getCorfuRuntime().getLayoutView().getLayout());
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
+        } catch (OutrankedException | QuorumUnreachableException | CloneNotSupportedException e) {
+            log.error("Request to add new node: {} failed with exception:", msg.getPayload(), e);
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+        }
+    }
+
+    @ServerHandler(type = CorfuMsgType.MERGE_SEGMENTS_REQUEST, opTimer = metricsPrefix
+            + "merge-segments")
+    public synchronized void handleMergeSegmentRequest(CorfuMsg msg, ChannelHandlerContext ctx,
+                                                       IServerRouter r, boolean isMetricsEnabled) {
+        if (isShutdown()) {
+            log.warn("Management Server received {} but is shutdown.", msg.getMsgType().toString());
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            return;
+        }
+        // This server has not been bootstrapped yet, ignore all requests.
+        if (!checkBootstrap(msg, ctx, r)) {
+            return;
+        }
+
+        log.info("Received merge segments request");
+        try {
+            failureHandlerDispatcher
+                    .mergeSegments((Layout) latestLayout.clone(), getCorfuRuntime());
+            safeUpdateLayout(getCorfuRuntime().getLayoutView().getLayout());
+            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
+        } catch (OutrankedException | QuorumUnreachableException | CloneNotSupportedException
+                | LayoutModificationException e) {
+            log.error("Request to merge segments failed with exception:", e);
             r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
         }
     }
