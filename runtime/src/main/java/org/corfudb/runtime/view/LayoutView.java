@@ -45,7 +45,7 @@ public class LayoutView extends AbstractView {
      * @return The number of nodes required for a quorum.
      */
     public int getQuorumNumber() {
-        return (int) (getCurrentLayout().getLayoutClientStream().count() / 2) + 1;
+        return (getCurrentLayout().getLayoutServers().size() / 2) + 1;
     }
 
     /**
@@ -70,7 +70,7 @@ public class LayoutView extends AbstractView {
         long epoch = layout.getEpoch();
         Layout layoutToPropose = layout;
         //phase 1: prepare with a given rank.
-        Layout alreadyProposedLayout = prepare(epoch, rank, layout);
+        Layout alreadyProposedLayout = prepare(epoch, rank);
         layoutToPropose = alreadyProposedLayout != null ? alreadyProposedLayout : layout;
         // For some reason, the alreadyProposedLayout sometimes doesn't have a runtime
         // we need to remove runtime from the layout, but for now, let's manually take
@@ -84,7 +84,6 @@ public class LayoutView extends AbstractView {
 
     /**
      * Sends prepare to the current layout and can proceed only if it is accepted by a quorum.
-     * // TODO Gets stuck if quorum is not achieved. Figure out if this is the correct solution.
      *
      * @param rank The rank for the proposed layout.
      * @return layout
@@ -94,14 +93,15 @@ public class LayoutView extends AbstractView {
      * @throws WrongEpochException wrong epoch number.
      */
     @SuppressWarnings("unchecked")
-    public Layout prepare(long epoch, long rank, Layout layout)
+    public Layout prepare(long epoch, long rank)
             throws QuorumUnreachableException, OutrankedException, WrongEpochException {
 
-        CompletableFuture<LayoutPrepareResponse>[] prepareList = layout.getLayoutClientStream()
+        CompletableFuture<LayoutPrepareResponse>[] prepareList = getLayout().getLayoutClientStream()
                 .map(x -> x.prepare(epoch, rank))
                 .toArray(CompletableFuture[]::new);
         LayoutPrepareResponse[] acceptList;
         long timeouts = 0L;
+        long wrongEpochRejected = 0L;
         while (true) {
             // do we still have enough for a quorum?
             if (prepareList.length < getQuorumNumber()) {
@@ -113,9 +113,12 @@ public class LayoutView extends AbstractView {
             // wait for someone to complete.
             try {
                 CFUtils.getUninterruptibly(CompletableFuture.anyOf(prepareList),
-                        OutrankedException.class, TimeoutException.class);
+                        OutrankedException.class, TimeoutException.class,
+                        WrongEpochException.class);
             } catch (TimeoutException te) {
                 timeouts++;
+            } catch (WrongEpochException we) {
+                wrongEpochRejected++;
             }
 
             // remove errors.
@@ -128,8 +131,8 @@ public class LayoutView extends AbstractView {
                     .filter(x -> x != null)
                     .toArray(LayoutPrepareResponse[]::new);
 
-            log.debug("Successful responses={}, needed={}, timeouts={}", acceptList.length,
-                    getQuorumNumber(), timeouts);
+            log.debug("Successful responses={}, needed={}, timeouts={}, wrongEpochRejected={}",
+                    acceptList.length, getQuorumNumber(), timeouts, wrongEpochRejected);
 
             if (acceptList.length >= getQuorumNumber()) {
                 break;
@@ -145,7 +148,6 @@ public class LayoutView extends AbstractView {
 
     /**
      * Proposes new layout to all the servers in the current layout.
-     * // TODO Gets stuck if quorum is not achieved. Figure out if this is the correct solution.
      *
      * @throws QuorumUnreachableException Thrown if responses not received from a majority of
      *                                    layout servers.
@@ -154,11 +156,12 @@ public class LayoutView extends AbstractView {
     @SuppressWarnings("unchecked")
     public Layout propose(long epoch, long rank, Layout layout)
             throws QuorumUnreachableException, OutrankedException {
-        CompletableFuture<Boolean>[] proposeList = layout.getLayoutClientStream()
+        CompletableFuture<Boolean>[] proposeList = getLayout().getLayoutClientStream()
                 .map(x -> x.propose(epoch, rank, layout))
                 .toArray(CompletableFuture[]::new);
 
         long timeouts = 0L;
+        long wrongEpochRejected = 0L;
         while (true) {
             // do we still have enough for a quorum?
             if (proposeList.length < getQuorumNumber()) {
@@ -170,9 +173,12 @@ public class LayoutView extends AbstractView {
             // wait for someone to complete.
             try {
                 CFUtils.getUninterruptibly(CompletableFuture.anyOf(proposeList),
-                        OutrankedException.class, TimeoutException.class);
+                        OutrankedException.class, TimeoutException.class,
+                        WrongEpochException.class);
             } catch (TimeoutException te) {
                 timeouts++;
+            } catch (WrongEpochException we) {
+                wrongEpochRejected++;
             }
 
             // remove errors.
@@ -183,11 +189,11 @@ public class LayoutView extends AbstractView {
             // count successes.
             long count = stream(proposeList)
                     .map(x -> x.getNow(false))
-                    .filter(x -> true)
+                    .filter(x -> x)
                     .count();
 
-            log.debug("Successful responses={}, needed={}, timeouts={}", count, getQuorumNumber(),
-                    timeouts);
+            log.debug("Successful responses={}, needed={}, timeouts={}, wrongEpochRejected={}",
+                    count, getQuorumNumber(), timeouts, wrongEpochRejected);
 
             if (count >= getQuorumNumber()) {
                 break;
