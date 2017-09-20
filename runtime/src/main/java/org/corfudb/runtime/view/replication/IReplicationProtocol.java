@@ -4,10 +4,12 @@ import java.util.AbstractMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
 import org.corfudb.protocols.wireprotocol.ILogData;
+import org.corfudb.runtime.clients.LogUnitClient;
 import org.corfudb.runtime.exceptions.OverwriteException;
 import org.corfudb.runtime.view.Layout;
 
@@ -129,6 +131,12 @@ public interface IReplicationProtocol {
         return globalAddresses.parallelStream()
                 .map(a -> new AbstractMap.SimpleImmutableEntry<>(a, peek(layout, a)))
                 .collect(Collectors.toMap(r -> r.getKey(), r -> r.getValue()));
+    }
+
+    default CompletableFuture<Boolean> replicateSegment(String filePath, int segmentStart,
+                                                        int segmentEnd,
+                                                        LogUnitClient logUnitClient) {
+        throw new UnsupportedOperationException("Add node not implemented");
     }
 
 }

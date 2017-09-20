@@ -64,6 +64,12 @@ public class FailureHandlerDispatcher {
 
         attemptConsensus(newLayout, corfuRuntime);
 
+        try {
+            reconfigureServers(corfuRuntime, currentLayout, newLayout, true);
+        } catch (ExecutionException e) {
+            log.error("Bootstrapping sequencer failed due to exception : ", e);
+        }
+
         return maxGlobalTail;
     }
 
@@ -81,6 +87,12 @@ public class FailureHandlerDispatcher {
         newLayout.setRuntime(corfuRuntime);
 
         attemptConsensus(newLayout, corfuRuntime);
+
+        try {
+            reconfigureServers(corfuRuntime, currentLayout, newLayout, true);
+        } catch (ExecutionException e) {
+            log.error("Bootstrapping sequencer failed due to exception : ", e);
+        }
 
         return true;
     }

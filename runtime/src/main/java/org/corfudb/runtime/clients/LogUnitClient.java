@@ -19,19 +19,7 @@ import lombok.Getter;
 import lombok.NonNull;
 import lombok.Setter;
 import org.corfudb.protocols.logprotocol.LogEntry;
-import org.corfudb.protocols.wireprotocol.CorfuMsg;
-import org.corfudb.protocols.wireprotocol.CorfuMsgType;
-import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
-import org.corfudb.protocols.wireprotocol.DataType;
-import org.corfudb.protocols.wireprotocol.FillHoleRequest;
-import org.corfudb.protocols.wireprotocol.ILogData;
-import org.corfudb.protocols.wireprotocol.IMetadata;
-import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
-import org.corfudb.protocols.wireprotocol.ReadRequest;
-import org.corfudb.protocols.wireprotocol.ReadResponse;
-import org.corfudb.protocols.wireprotocol.TrimRequest;
-import org.corfudb.protocols.wireprotocol.WriteMode;
-import org.corfudb.protocols.wireprotocol.WriteRequest;
+import org.corfudb.protocols.wireprotocol.*;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.exceptions.DataCorruptionException;
 import org.corfudb.runtime.exceptions.DataOutrankedException;
@@ -448,5 +436,10 @@ public class LogUnitClient implements IClient {
                 CorfuRuntime.getMpLUC()
                         + getHost() + ":" + getPort().toString() + "-" + opName);
         return t.time();
+    }
+
+    public CompletableFuture<Boolean> replicateSegment(FileSegmentReplicationRequest msg) {
+        return router.sendMessageAndGetCompletable(
+                CorfuMsgType.SEGMENT_REPLICATION.payloadMsg(msg));
     }
 }

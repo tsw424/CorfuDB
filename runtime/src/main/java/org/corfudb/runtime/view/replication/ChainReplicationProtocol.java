@@ -2,14 +2,22 @@ package org.corfudb.runtime.view.replication;
 
 import com.google.common.collect.Range;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
 import javax.annotation.Nullable;
 import lombok.extern.slf4j.Slf4j;
+import org.corfudb.protocols.wireprotocol.FileSegmentReplicationRequest;
 import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.protocols.wireprotocol.LogData;
+import org.corfudb.runtime.clients.LogUnitClient;
 import org.corfudb.runtime.exceptions.OverwriteException;
 import org.corfudb.runtime.exceptions.RecoveryException;
 import org.corfudb.runtime.view.Layout;
@@ -215,6 +223,31 @@ public class ChainReplicationProtocol extends AbstractReplicationProtocol {
                 log.debug("Recover[{}]: overwritten at chain {}/{}", layout, i + 1, numUnits);
             }
         }
+    }
+
+    public CompletableFuture<Boolean> replicateSegment(String filePath, int segmentStart,
+                                                       int segmentEnd,
+                                                       LogUnitClient logUnitClient) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                // Send the segment to the recovering replica.
+                int segment = 0;
+                // Get from static getter in StreamLogFiles
+//            String filePath = serverContext.getServerConfig().get("--log-path")
+//                    + File.separator + "log" + File.separator + segment + ".log";
+                File segmentFile = new File(filePath);
+                FileInputStream fis = new FileInputStream(segmentFile);
+                byte[] fileBuffer = new byte[(int) segmentFile.length()];
+                fis.read(fileBuffer);
+                // We pay the cost of byte[] copy.
+                logUnitClient.replicateSegment(
+                        new FileSegmentReplicationRequest(segment, fileBuffer)).get();
+
+            } catch (InterruptedException | ExecutionException | IOException e) {
+                e.printStackTrace();
+            }
+            return true;
+        });
     }
 
     /**

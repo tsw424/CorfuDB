@@ -4,9 +4,13 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import io.netty.channel.ChannelHandlerContext;
 
+import java.io.File;
 import java.lang.invoke.MethodHandles;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -25,10 +29,7 @@ import org.corfudb.protocols.wireprotocol.CorfuMsgType;
 import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
 import org.corfudb.protocols.wireprotocol.FailureDetectorMsg;
 import org.corfudb.runtime.CorfuRuntime;
-import org.corfudb.runtime.clients.IClientRouter;
-import org.corfudb.runtime.clients.LayoutClient;
-import org.corfudb.runtime.clients.ManagementClient;
-import org.corfudb.runtime.clients.SequencerClient;
+import org.corfudb.runtime.clients.*;
 import org.corfudb.runtime.exceptions.LayoutModificationException;
 import org.corfudb.runtime.exceptions.OutrankedException;
 import org.corfudb.runtime.exceptions.QuorumUnreachableException;
@@ -396,7 +397,7 @@ public class ManagementServer extends AbstractServer {
                                                        IServerRouter r, boolean isMetricsEnabled) {
         if (isShutdown()) {
             log.warn("Management Server received {} but is shutdown.", msg.getMsgType().toString());
-            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+            r.sendResponse(ctx, msg, CorfuMsgType.NACK.msg());
             return;
         }
         // This server has not been bootstrapped yet, ignore all requests.
@@ -404,17 +405,83 @@ public class ManagementServer extends AbstractServer {
             return;
         }
 
-        log.info("Received merge segments request");
-        try {
-            failureHandlerDispatcher
-                    .mergeSegments((Layout) latestLayout.clone(), getCorfuRuntime());
-            safeUpdateLayout(getCorfuRuntime().getLayoutView().getLayout());
-            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
-        } catch (OutrankedException | QuorumUnreachableException | CloneNotSupportedException
-                | LayoutModificationException e) {
-            log.error("Request to merge segments failed with exception:", e);
-            r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.NACK));
+        log.info("Received merge segments request.");
+
+        if (segmentCopyWorkflow != null) {
+            // Workflow already started. Check status and send appropriate message to caller.
+            if (segmentCopyWorkflow.isDone() && !segmentCopyWorkflow.isCompletedExceptionally()) {
+                // Completed successfully.
+            } else if (!segmentCopyWorkflow.isDone()) {
+                // Workflow in progress.
+                return;
+            } else {
+                // Workflow ended exceptionally. Return exception to user.
+                return;
+            }
+        } else {
+            log.info("Submitting task to replicate and merge segments");
+            handleSegmentCopy();
+            segmentCopyWorkflow.thenApplyAsync(replicationResult -> {
+                if (!replicationResult) {
+                    // Cannot merge if replication fails.
+                    return replicationResult;
+                }
+                try {
+                    failureHandlerDispatcher
+                            .mergeSegments((Layout) latestLayout.clone(), getCorfuRuntime());
+                    safeUpdateLayout(getCorfuRuntime().getLayoutView().getLayout());
+                    r.sendResponse(ctx, msg, new CorfuMsg(CorfuMsgType.ACK));
+                } catch (OutrankedException | QuorumUnreachableException
+                        | CloneNotSupportedException | LayoutModificationException e) {
+                    log.error("Request to merge segments failed with exception:", e);
+                }
+                return true;
+            });
         }
+        r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
+    }
+
+    private CompletableFuture<Boolean> segmentCopyWorkflow;
+
+    public void handleSegmentCopy() {
+        log.info("Starting segment replication.");
+
+        List<Layout.LayoutSegment> segmentList = latestLayout.getSegments();
+        if (segmentList.size() < 2) {
+            log.info("Not enough segments to merge.");
+            return;
+        }
+
+        int collapsingSegmentIndex = segmentList.size() - 1;
+        Layout.LayoutSegment collapsingSegment = segmentList.get(collapsingSegmentIndex);
+        int oldSegmentIndex = segmentList.size() - 2;
+        Layout.LayoutSegment oldSegment = segmentList.get(oldSegmentIndex);
+
+        // FIXME: All files which fall under oldSegment need to be replicated. CHANGE THIS.
+        String filePath = serverContext.getServerConfig().get("--log-path")
+                + File.separator + "log" + File.separator + oldSegmentIndex + ".log";
+
+        Set<String> newNodes = new HashSet<>();
+        collapsingSegment.getStripes().forEach(
+                layoutStripe -> newNodes.addAll(layoutStripe.getLogServers()));
+        oldSegment.getStripes().forEach(
+                layoutStripe -> newNodes.removeAll(layoutStripe.getLogServers()));
+
+        final String[] recoveringNode = newNodes.toArray(new String[newNodes.size()]);
+        if (newNodes.size() != 1) {
+            log.warn("Cannot merge segments with multiple new nodes: {}", newNodes);
+            return;
+        }
+
+        newNodes.forEach(s -> recoveringNode[0] = s);
+
+        segmentCopyWorkflow = collapsingSegment
+                .getReplicationMode()
+                .replicateSegment(getCorfuRuntime(), filePath,
+                        (int) collapsingSegment.getStart(),
+                        (int) collapsingSegment.getEnd(),
+                        getCorfuRuntime().getRouter(recoveringNode[0])
+                                .getClient(LogUnitClient.class));
     }
 
     /**

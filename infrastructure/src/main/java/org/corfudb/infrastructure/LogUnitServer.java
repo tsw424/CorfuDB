@@ -9,6 +9,9 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import io.netty.channel.ChannelHandlerContext;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -22,16 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.corfudb.infrastructure.log.InMemoryStreamLog;
 import org.corfudb.infrastructure.log.StreamLog;
 import org.corfudb.infrastructure.log.StreamLogFiles;
-import org.corfudb.protocols.wireprotocol.CorfuMsg;
-import org.corfudb.protocols.wireprotocol.CorfuMsgType;
-import org.corfudb.protocols.wireprotocol.CorfuPayloadMsg;
-import org.corfudb.protocols.wireprotocol.ILogData;
-import org.corfudb.protocols.wireprotocol.LogData;
-import org.corfudb.protocols.wireprotocol.MultipleReadRequest;
-import org.corfudb.protocols.wireprotocol.ReadRequest;
-import org.corfudb.protocols.wireprotocol.ReadResponse;
-import org.corfudb.protocols.wireprotocol.TrimRequest;
-import org.corfudb.protocols.wireprotocol.WriteRequest;
+import org.corfudb.protocols.wireprotocol.*;
 import org.corfudb.runtime.exceptions.DataCorruptionException;
 import org.corfudb.runtime.exceptions.DataOutrankedException;
 import org.corfudb.runtime.exceptions.OverwriteException;
@@ -284,6 +278,37 @@ public class LogUnitServer extends AbstractServer {
             log.error("Encountered error while flushing cache {}", e);
         }
         r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
+    }
+
+    @ServerHandler(type = CorfuMsgType.SEGMENT_REPLICATION, opTimer = metricsPrefix + "replication")
+    private void replicateSegment(CorfuPayloadMsg<FileSegmentReplicationRequest> msg,
+                                  ChannelHandlerContext ctx, IServerRouter r,
+                                  boolean isMetricsEnabled) {
+        try {
+            int segmentIndex = msg.getPayload().getFileSegmentIndex();
+            byte[] fileBuffer = msg.getPayload().getFileBuffer();
+
+            String filePath = opts.get("--log-path") + File.separator + "log"
+                    + File.separator + segmentIndex + ".log";
+            File replicatedFile = new File(filePath);
+            boolean result = replicatedFile.createNewFile();
+            assert result;
+
+            try (FileOutputStream fos = new FileOutputStream(replicatedFile)) {
+                fos.write(fileBuffer);
+                fos.close();
+            }
+
+            // Reset handle so that if handle already exists, it recognizes newly added values.
+            StreamLogFiles slf = (StreamLogFiles) streamLog;
+            slf.resetSegmentHandler(filePath);
+
+            r.sendResponse(ctx, msg, CorfuMsgType.ACK.msg());
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            r.sendResponse(ctx, msg, CorfuMsgType.NACK.msg());
+        }
     }
 
 

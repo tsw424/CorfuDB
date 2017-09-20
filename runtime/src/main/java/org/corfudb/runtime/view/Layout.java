@@ -433,6 +433,16 @@ public class Layout implements Cloneable {
                             r.getParameters().getHoleFillRetry()));
                 }
             }
+
+            @Override
+            public CompletableFuture<Boolean> replicateSegment(CorfuRuntime runtime,
+                                                               String filePath,
+                                                               int segmentStart,
+                                                               int segmentEnd,
+                                                               LogUnitClient logUnitClient) {
+                return getReplicationProtocol(runtime)
+                        .replicateSegment(filePath, segmentStart, segmentEnd, logUnitClient);
+            }
         },
         QUORUM_REPLICATION {
             @Override
@@ -488,6 +498,14 @@ public class Layout implements Cloneable {
 
         public IReplicationProtocol getReplicationProtocol(CorfuRuntime r) {
             throw new UnsupportedOperationException();
+        }
+
+        public CompletableFuture<Boolean> replicateSegment(CorfuRuntime runtime,
+                                                           String filePath,
+                                                           int segmentStart,
+                                                           int segmentEnd,
+                                                           LogUnitClient logUnitClient) {
+            throw new UnsupportedOperationException("Segment replication not supported.");
         }
     }
 

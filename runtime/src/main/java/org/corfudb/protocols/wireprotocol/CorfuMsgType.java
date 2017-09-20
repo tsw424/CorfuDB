@@ -91,6 +91,8 @@ public enum CorfuMsgType {
     ADD_NODE_REQUEST(77, new TypeToken<CorfuPayloadMsg<AddNodeRequest>>() {}),
     MERGE_SEGMENTS_REQUEST(78, TypeToken.of(CorfuMsg.class)),
 
+    SEGMENT_REPLICATION(80, new TypeToken<CorfuPayloadMsg<FileSegmentReplicationRequest>>() {}),
+
     ERROR_SERVER_EXCEPTION(200, new TypeToken<CorfuPayloadMsg<ExceptionMsg>>() {}, true)
     ;
 

@@ -999,6 +999,10 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
         }
     }
 
+    public void resetSegmentHandler(String filePath) {
+        writeChannels.remove(filePath).close();
+    }
+
     @Override
     public void close() {
         for (SegmentHandle fh : writeChannels.values()) {
