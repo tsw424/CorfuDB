@@ -290,7 +290,7 @@ public class CorfuSMRObjectProxyTest extends AbstractObjectTest {
         ObjectsView.ObjectID mapId = new ObjectsView.
                 ObjectID(CorfuRuntime.getStreamID("test"), SMRMap.class);
 
-        ICorfuSMR wrapper = ((ICorfuSMR) r.getObjectsView().
+        ICorfuWrapper wrapper = ((ICorfuWrapper) r.getObjectsView().
                 getObjectCache().
                 get(mapId));
 

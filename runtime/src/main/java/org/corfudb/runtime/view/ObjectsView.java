@@ -15,8 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
-import org.corfudb.runtime.object.CorfuCompileWrapperBuilder;
-import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.CorfuWrapperBuilder;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectBuilder;
 import org.corfudb.runtime.object.transactions.TransactionBuilder;
 import org.corfudb.runtime.object.transactions.TransactionType;
@@ -67,10 +67,10 @@ public class ObjectsView extends AbstractView {
      */
     @SuppressWarnings("unchecked")
     public <T> T copy(@NonNull T obj, @NonNull UUID destination) {
-        ICorfuSMR<T> wrapper = (ICorfuSMR<T>)obj;
+        ICorfuWrapper<T> wrapper = (ICorfuWrapper<T>)obj;
         ObjectID oid = new ObjectID(destination, wrapper.getCorfuBuilder().getType());
         return (T) objectCache.computeIfAbsent(oid, x -> {
-            IStreamView sv = runtime.getStreamsView().copy(wrapper.getCorfuStreamID(),
+            IStreamView sv = runtime.getStreamsView().copy(wrapper.getId$CORFU(),
                     destination, wrapper.getObjectManager$CORFU().getVersion());
             try {
                 final ObjectBuilder<T> originalBuilder = (ObjectBuilder<T>)
@@ -82,7 +82,7 @@ public class ObjectsView extends AbstractView {
                         .setStreamID(sv.getId());
 
                 return
-                        CorfuCompileWrapperBuilder.getWrapper((ObjectBuilder)builder);
+                        CorfuWrapperBuilder.getWrapper((ObjectBuilder)builder);
             } catch (Exception ex) {
                 throw new RuntimeException(ex);
             }
@@ -207,9 +207,9 @@ public class ObjectsView extends AbstractView {
      * @param object    The Corfu object to sync.
      */
     public void syncObject(Object object) {
-        if (object instanceof ICorfuSMR<?>) {
-            ICorfuSMR<?> corfuObject = (ICorfuSMR<?>) object;
-            corfuObject.getCorfuSMRProxy().sync();
+        if (object instanceof ICorfuWrapper<?>) {
+            ICorfuWrapper<?> corfuObject = (ICorfuWrapper<?>) object;
+            corfuObject.getObjectManager$CORFU().sync();
         }
     }
 
@@ -220,9 +220,9 @@ public class ObjectsView extends AbstractView {
     public void syncObject(Object... objects) {
         Arrays.stream(objects)
                 .parallel()
-                .filter(x -> x instanceof ICorfuSMR<?>)
-                .map(x -> (ICorfuSMR<?>) x)
-                .forEach(x -> x.getCorfuSMRProxy().sync());
+                .filter(x -> x instanceof ICorfuWrapper<?>)
+                .map(x -> (ICorfuWrapper<?>) x)
+                .forEach(x -> x.getObjectManager$CORFU().sync());
     }
 
     @Data

@@ -85,7 +85,7 @@ public class CompileProxyTest extends AbstractViewTest {
         // track the raw stream updates caused by the execution so far
         VersionedObjectManager<CorfuSharedCounter> om =
                 (VersionedObjectManager<CorfuSharedCounter>)
-                        ((ICorfuSMR)sharedCounter).getObjectManager$CORFU();
+                        ((ICorfuWrapper)sharedCounter).getObjectManager$CORFU();
         //IStreamView objStream = proxy_CORFUSMR.getUnderlyingObject().getStreamViewUnsafe();
 
         int beforeSync, afterSync;
@@ -208,7 +208,7 @@ public class CompileProxyTest extends AbstractViewTest {
 
         VersionedObjectManager<CorfuSharedCounter> om =
                 (VersionedObjectManager<CorfuSharedCounter>)
-                        ((ICorfuSMR)sharedCounter).getObjectManager$CORFU();
+                        ((ICorfuWrapper)sharedCounter).getObjectManager$CORFU();
 
       //  IStreamView objStream = proxy_CORFUSMR.getUnderlyingObject().getStreamViewUnsafe();
 
@@ -390,7 +390,7 @@ public class CompileProxyTest extends AbstractViewTest {
         // for tracking raw stream status
         VersionedObjectManager<CorfuCompoundObj> om =
                 (VersionedObjectManager<CorfuCompoundObj>)
-                        ((ICorfuSMR)sharedCorfuCompound).getObjectManager$CORFU();
+                        ((ICorfuWrapper)sharedCorfuCompound).getObjectManager$CORFU();
        // IStreamView objStream = proxy_CORFUSMR.getUnderlyingObject().getStreamViewUnsafe();
 
         // initialization

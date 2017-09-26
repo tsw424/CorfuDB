@@ -7,9 +7,7 @@ import org.corfudb.protocols.logprotocol.CheckpointEntry;
 import org.corfudb.protocols.logprotocol.LogEntry;
 import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.runtime.CorfuRuntime;
-import org.corfudb.runtime.collections.SMRMap;
-import org.corfudb.runtime.object.CorfuCompileProxy;
-import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.runtime.view.ObjectsView;
 import org.corfudb.util.serializer.ISerializer;
@@ -114,8 +112,8 @@ public class RecoveryUtils {
      * @param streamId
      * @return
      */
-    static <T> ICorfuSMR<T> getWrapper(CorfuRuntime runtime, UUID streamId, Class<T> type) {
+    static <T> ICorfuWrapper<T> getWrapper(CorfuRuntime runtime, UUID streamId, Class<T> type) {
         ObjectsView.ObjectID thisObjectId = new ObjectsView.ObjectID(streamId, type);
-        return (ICorfuSMR<T>) runtime.getObjectsView().getObjectCache().get(thisObjectId);
+        return (ICorfuWrapper<T>) runtime.getObjectsView().getObjectCache().get(thisObjectId);
     }
 }

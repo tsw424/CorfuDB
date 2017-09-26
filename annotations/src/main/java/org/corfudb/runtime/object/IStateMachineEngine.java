@@ -1,7 +1,5 @@
 package org.corfudb.runtime.object;
 
-import java.util.function.Supplier;
-
 public interface IStateMachineEngine {
 
     /** Access a state machine's state.
@@ -13,8 +11,8 @@ public interface IStateMachineEngine {
      * @param <T>
      * @return
      */
-    <R, T> R access(ICorfuSMR<T> wrapper,
-           ICorfuSMRAccess<R, T> accessFunction,
+    <R, T> R access(ICorfuWrapper<T> wrapper,
+           IStateMachineAccess<R, T> accessFunction,
            Object[] conflictObject);
 
     /** Log a update to a state machine.
@@ -24,7 +22,7 @@ public interface IStateMachineEngine {
      * @param <T>
      * @return
      */
-    <T> long logUpdate(ICorfuSMR<T> wrapper,
+    <T> long logUpdate(ICorfuWrapper<T> wrapper,
                        String smrUpdateFunction, boolean keepUpcallResult,
                        Object[] conflictObject, Object... args);
 
@@ -37,7 +35,7 @@ public interface IStateMachineEngine {
      * @param <R>
      * @return
      */
-    <T,R> R getUpcallResult (ICorfuSMR<T> wrapper,
+    <T,R> R getUpcallResult (ICorfuWrapper<T> wrapper,
                              long address,
                              Object[] conflictObject);
 }

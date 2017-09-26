@@ -9,8 +9,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.view.ObjectBuilder;
 
 import lombok.Getter;
@@ -24,16 +23,16 @@ public class ConflictSet {
 
 
     /** Set of objects this conflict set conflicts with. */
-    protected final Map<ICorfuSMR, Set<Object>> conflicts = new HashMap<>();
+    protected final Map<ICorfuWrapper, Set<Object>> conflicts = new HashMap<>();
 
     /** Get a hash for the object, given a proxy. */
-    public static byte[] generateHashFromObject(ICorfuSMR p, Object o) {
+    public static byte[] generateHashFromObject(ICorfuWrapper p, Object o) {
         return ((ObjectBuilder)p.getCorfuBuilder()).getSerializer().hash(o);
     }
 
-    public Optional<ICorfuSMR> getWrapper(UUID stream) {
+    public Optional<ICorfuWrapper> getWrapper(UUID stream) {
         return conflicts.keySet().stream()
-                .filter(p -> p.getCorfuStreamID().equals(stream))
+                .filter(p -> p.getId$CORFU().equals(stream))
                 .findFirst();
     }
 
@@ -44,7 +43,7 @@ public class ConflictSet {
         return conflicts.entrySet().stream()
                 .collect(Collectors.toMap(
                         // Key = UUID
-                        e -> e.getKey().getCorfuStreamID(),
+                        e -> e.getKey().getId$CORFU(),
                         // Value = Generated hash.
                         e -> e.getValue().stream()
                                 .map(o -> ConflictSet.generateHashFromObject(e.getKey(), o))
@@ -59,7 +58,7 @@ public class ConflictSet {
     }
 
     /** Add an operation into this conflict set. */
-    public <T> void add(ICorfuSMR<T> wrapper, Object[] conflictObjects) {
+    public <T> void add(ICorfuWrapper<T> wrapper, Object[] conflictObjects) {
         if (conflictObjects == null) {
             return;
         }

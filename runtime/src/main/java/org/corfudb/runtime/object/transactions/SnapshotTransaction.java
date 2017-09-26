@@ -1,8 +1,8 @@
 package org.corfudb.runtime.object.transactions;
 
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
-import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.ICorfuSMRAccess;
+import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IStateMachineAccess;
 import org.corfudb.runtime.object.VersionedObjectManager;
 
 /**
@@ -28,8 +28,8 @@ public class SnapshotTransaction extends AbstractTransaction {
      * {@inheritDoc}
      */
     @Override
-    public <R, T> R access(ICorfuSMR<T> wrapper,
-                           ICorfuSMRAccess<R, T> accessFunction,
+    public <R, T> R access(ICorfuWrapper<T> wrapper,
+                           IStateMachineAccess<R, T> accessFunction,
                            Object[] conflictObject) {
 
         // In snapshot transactions, there are no conflicts.
@@ -49,7 +49,7 @@ public class SnapshotTransaction extends AbstractTransaction {
      * {@inheritDoc}
      */
     @Override
-    public <T, R> R getUpcallResult(ICorfuSMR<T> wrapper,
+    public <T, R> R getUpcallResult(ICorfuWrapper<T> wrapper,
                                       long timestamp,
                                       Object[] conflictObject) {
         throw new UnsupportedOperationException("Can't get upcall during a read-only transaction!");
@@ -59,7 +59,7 @@ public class SnapshotTransaction extends AbstractTransaction {
      * {@inheritDoc}
      */
     @Override
-    public <T> long logUpdate(ICorfuSMR<T> wrapper,
+    public <T> long logUpdate(ICorfuWrapper<T> wrapper,
                               String smrUpdateFunction, boolean keepUpcallResult,
                               Object[] conflictObject, Object... args) {
         throw new UnsupportedOperationException(

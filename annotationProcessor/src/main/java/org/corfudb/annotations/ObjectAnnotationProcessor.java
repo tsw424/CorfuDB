@@ -1,10 +1,8 @@
 package org.corfudb.annotations;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.squareup.javapoet.AnnotationSpec;
-import com.squareup.javapoet.ArrayTypeName;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
@@ -16,7 +14,6 @@ import com.squareup.javapoet.TypeSpec;
 import com.squareup.javapoet.TypeVariableName;
 
 import java.io.IOException;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -47,17 +44,12 @@ import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 
 import org.corfudb.runtime.object.IConflictFunction;
-import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.ICorfuSMRProxy;
-import org.corfudb.runtime.object.ICorfuSMRUpcallTarget;
+import org.corfudb.runtime.object.ICorfuWrapper;
+import org.corfudb.runtime.object.IStateMachineUpcall;
 import org.corfudb.runtime.object.IManagerGenerator;
-import org.corfudb.runtime.object.IObjectBuilder;
 import org.corfudb.runtime.object.IObjectManager;
-import org.corfudb.runtime.object.IStateMachineEngine;
 import org.corfudb.runtime.object.IUndoFunction;
 import org.corfudb.runtime.object.IUndoRecordFunction;
-
-import lombok.RequiredArgsConstructor;
 
 /** <p>The annotation processor, which takes annotated Corfu objects and
  * generates a class which can be used by the runtime instead of requiring
@@ -108,7 +100,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
             roundEnv.getRootElements().stream()
                     .filter(x -> x.getKind() == ElementKind.CLASS)
                     // Don't re-instrument instrumented classes
-                    .filter(x -> !x.getSimpleName().toString().endsWith(ICorfuSMR.CORFUSMR_SUFFIX))
+                    .filter(x -> !x.getSimpleName().toString().endsWith(ICorfuWrapper.CORFUSMR_SUFFIX))
                     .map(x -> (TypeElement) x)
                     .forEach(this::processClass);
         } catch (Exception e) {
@@ -230,15 +222,15 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
         ClassName proxyName = classElement.getNestingKind() == NestingKind.TOP_LEVEL
                 ?
                 // Top level classes can just use the name
-                ClassName.bestGuess(classElement.getSimpleName() + ICorfuSMR.CORFUSMR_SUFFIX) :
+                ClassName.bestGuess(classElement.getSimpleName() + ICorfuWrapper.CORFUSMR_SUFFIX) :
                 // Otherwise we need to include the enclosing element as well.
                 ClassName.bestGuess(classElement.getEnclosingElement().getSimpleName()
-                        + "$" + classElement.getSimpleName() + ICorfuSMR.CORFUSMR_SUFFIX);
+                        + "$" + classElement.getSimpleName() + ICorfuWrapper.CORFUSMR_SUFFIX);
         // Also get the class name of the original class.
         TypeName originalName = ParameterizedTypeName.get(classElement.asType());
 
         // Generate the proxy class. The proxy class extends the original class and implements
-        // ICorfuSMR.
+        // ICorfuWrapper.
         TypeSpec.Builder typeSpecBuilder = TypeSpec
                 .classBuilder(proxyName)
                 .addTypeVariables(classElement.getTypeParameters()
@@ -247,7 +239,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                                     .collect(Collectors.toList())
                 )
                 .addSuperinterface(ParameterizedTypeName
-                        .get(ClassName.get(ICorfuSMR.class), originalName))
+                        .get(ClassName.get(ICorfuWrapper.class), originalName))
                 .superclass(originalName)
                 .addModifiers(Modifier.PUBLIC);
 
@@ -296,22 +288,6 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                 .returns(ParameterizedTypeName.get(ClassName.get(IObjectManager.class),
                         originalName))
                 .addStatement("return $L", "manager" + CORFUSMR_FIELD)
-                .build());
-
-        typeSpecBuilder.addField(ParameterizedTypeName.get(ClassName.get(ICorfuSMRProxy.class),
-                originalName), "proxy" + CORFUSMR_FIELD, Modifier.PUBLIC);
-        typeSpecBuilder.addMethod(MethodSpec.methodBuilder("getCorfuSMRProxy")
-                    .addModifiers(Modifier.PUBLIC)
-                    .returns(ParameterizedTypeName.get(ClassName.get(ICorfuSMRProxy.class),
-                            originalName))
-                    .addStatement("return null")
-                    .build());
-        typeSpecBuilder.addMethod(MethodSpec.methodBuilder("setCorfuSMRProxy")
-                .addParameter(ParameterizedTypeName.get(ClassName.get(ICorfuSMRProxy.class),
-                        originalName), "proxy")
-                .addModifiers(Modifier.PUBLIC)
-                .returns(TypeName.VOID)
-                .addStatement("this.$L = proxy", "proxy" + CORFUSMR_FIELD)
                 .build());
 
         // Gather the set of methods for from this class.
@@ -438,7 +414,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
 
         // remove any methods which end with $CORFUSMR
         methodSet.removeIf(x -> x.method.getSimpleName()
-                .toString().endsWith(ICorfuSMR.CORFUSMR_SUFFIX));
+                .toString().endsWith(ICorfuWrapper.CORFUSMR_SUFFIX));
 
         // Verify that all methods that require an up call have specified as annotated name
         checkAnnotatedNames(methodSet);
@@ -754,14 +730,14 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
 
         FieldSpec upcallMap = FieldSpec.builder(ParameterizedTypeName.get(ClassName.get(Map.class),
                 ClassName.get(String.class),
-                ParameterizedTypeName.get(ClassName.get(ICorfuSMRUpcallTarget.class),
+                ParameterizedTypeName.get(ClassName.get(IStateMachineUpcall.class),
                         originalName)), "upcallMap" + CORFUSMR_FIELD,
                 Modifier.PUBLIC, Modifier.FINAL)
                 .initializer("new $T()$L.build()",
                         ParameterizedTypeName.get(ClassName.get(ImmutableMap.Builder.class),
                                 ClassName.get(String.class),
                                 ParameterizedTypeName.get(ClassName
-                                                .get(ICorfuSMRUpcallTarget.class),
+                                                .get(IStateMachineUpcall.class),
                                         originalName)), upcallString)
                 .build();
 
@@ -772,7 +748,7 @@ public class ObjectAnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.PUBLIC)
                 .returns(ParameterizedTypeName.get(ClassName.get(Map.class),
                         ClassName.get(String.class),
-                        ParameterizedTypeName.get(ClassName.get(ICorfuSMRUpcallTarget.class),
+                        ParameterizedTypeName.get(ClassName.get(IStateMachineUpcall.class),
                                 originalName)))
                 .addStatement("return $L", "upcallMap" + CORFUSMR_FIELD)
                 .build());

@@ -13,19 +13,17 @@ import org.corfudb.protocols.wireprotocol.TokenResponse;
  * by a stream.
  *
  * <p>This class defines an API for supporting stream operations on the SMR layer.
- * ISMRStream wraps a pure stream and provides a similar API: append, remainingTo, current,
+ * IStateMachineStream wraps a pure stream and provides a similar API: append, remainingTo, current,
  * previous, pos and seek.
  * Different from a stream, the entries returned from methods that obtain stream entries,
  * like current, previous, are of type SMREntry.
  *
  * <p>Created by mwei on 3/13/17.
  */
-@Deprecated // TODO: Add replacement method that conforms to style
-@SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
-public interface ISMRStream {
+public interface IStateMachineStream {
 
 
-    List<SMREntry> remainingUpTo(long maxGlobal);
+    List<SMREntry> remainingUpTo(long max);
 
     List<SMREntry> current();
 
@@ -35,11 +33,11 @@ public interface ISMRStream {
 
     void reset();
 
-    void seek(long globalAddress);
+    void seek(long pos);
 
     Stream<SMREntry> stream();
 
-    Stream<SMREntry> streamUpTo(long maxGlobal);
+    Stream<SMREntry> streamUpTo(long max);
 
     /**
      * Append a SMREntry to the stream, returning the global address
@@ -69,9 +67,5 @@ public interface ISMRStream {
      *
      * @return The UUID for this stream.
      */
-    @Deprecated // TODO: Add replacement method that conforms to style
-    @SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
-    default UUID getID() {
-        return new UUID(0L, 0L);
-    }
+    UUID getId();
 }

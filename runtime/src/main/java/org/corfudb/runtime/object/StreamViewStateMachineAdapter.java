@@ -18,20 +18,18 @@ import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.stream.IStreamView;
 
 /**
- * StreamViewSMRAdapter wraps a stream and implements the ISMRStream API over
+ * StreamViewStateMachineAdapter wraps a stream and implements the IStateMachineStream API over
  * it.
  *
  * <p>This is a relatively thin wrapper. For example, an underlying stream returns
- * from current() a LogData entry. StreamViewSMRAdapter verifies that the
+ * from current() a LogData entry. StreamViewStateMachineAdapter verifies that the
  * entry contains data (otherwise, return null), and that the payload is of type
  * ISMRConsumable (otherwise, again return null).  Since the underlying log supports multi-stream
  * entries, it collects and returns the SMREntries related to the current stream.
  *
  * <p>Created by mwei on 3/10/17.
  */
-@Deprecated // TODO: Add replacement method that conforms to style
-@SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
-public class StreamViewSMRAdapter implements ISMRStream {
+public class StreamViewStateMachineAdapter implements IStateMachineStream {
 
     /**
      * The stream view backing this adapter.
@@ -43,8 +41,8 @@ public class StreamViewSMRAdapter implements ISMRStream {
      */
     final CorfuRuntime runtime;
 
-    public StreamViewSMRAdapter(CorfuRuntime runtime,
-                                IStreamView streamView) {
+    public StreamViewStateMachineAdapter(CorfuRuntime runtime,
+                                         IStreamView streamView) {
         this.runtime = runtime;
         this.streamView = streamView;
     }
@@ -178,7 +176,7 @@ public class StreamViewSMRAdapter implements ISMRStream {
      * {@inheritDoc}
      */
     @Override
-    public UUID getID() {
+    public UUID getId() {
         return streamView.getId();
     }
 

@@ -15,9 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.CorfuTable;
-import org.corfudb.runtime.object.CorfuCompileProxy;
-import org.corfudb.runtime.object.CorfuCompileWrapperBuilder;
-import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.CorfuWrapperBuilder;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.IObjectBuilder;
 import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.util.serializer.ISerializer;
@@ -110,12 +109,12 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
 
         try {
             if (options.contains(ObjectOpenOptions.NO_CACHE)) {
-                return CorfuCompileWrapperBuilder.getWrapper(this);
+                return CorfuWrapperBuilder.getWrapper(this);
             } else {
                 ObjectsView.ObjectID<T> oid = new ObjectsView.ObjectID(streamID, type);
                 T result = (T) runtime.getObjectsView().objectCache.computeIfAbsent(oid, x -> {
                             try {
-                                return CorfuCompileWrapperBuilder.getWrapper(this);
+                                return CorfuWrapperBuilder.getWrapper(this);
                             } catch (Exception ex) {
                                 throw new RuntimeException(ex);
                             }
@@ -124,7 +123,7 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
                 // Get object serializer to check if we didn't attempt to set another serializer
                 // to an already existing map
                 ISerializer objectSerializer = ((ObjectBuilder)
-                        ((ICorfuSMR) runtime.getObjectsView().
+                        ((ICorfuWrapper) runtime.getObjectsView().
                         getObjectCache().
                         get(oid)).getObjectManager$CORFU().getBuilder()).getSerializer();
 

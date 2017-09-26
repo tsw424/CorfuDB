@@ -1,21 +1,17 @@
 package org.corfudb.runtime.object;
 
 import java.lang.reflect.Constructor;
-import java.util.Arrays;
-import java.util.UUID;
 
-import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.view.ObjectBuilder;
-import org.corfudb.util.serializer.ISerializer;
 
 /**
  * Builds a wrapper for the underlying SMR Object.
  *
  * <p>Created by mwei on 11/11/16.
  */
-public class CorfuCompileWrapperBuilder {
+public class CorfuWrapperBuilder {
 
-    static <T> VersionedObjectManager<T> generateManager(ICorfuSMR<T> w, ObjectBuilder<T> builder) {
+    static <T> VersionedObjectManager<T> generateManager(ICorfuWrapper<T> w, ObjectBuilder<T> builder) {
         return new VersionedObjectManager<>(
                 () -> {
                     try {
@@ -36,16 +32,13 @@ public class CorfuCompileWrapperBuilder {
                                 }
                             }
                         }
-                        if (ret instanceof ICorfuSMRProxyWrapper) {
-                            ((ICorfuSMRProxyWrapper<T>) ret).setProxy$CORFU(null);
-                        }
                         return ret;
                     } catch (InstantiationException | IllegalAccessException e) {
                         throw new RuntimeException(e);
                     }
                 }
                 ,
-                new StreamViewSMRAdapter(
+                new StreamViewStateMachineAdapter(
                         builder.getRuntime(),
                         builder.getRuntime()
                                 .getStreamsView().get(builder.getStreamId())),
@@ -61,17 +54,16 @@ public class CorfuCompileWrapperBuilder {
      * @throws IllegalAccessException Illegal Access to the Object.
      * @throws InstantiationException Cannot instantiate the object using the arguments and class.
      */
-    @Deprecated // TODO: Add replacement method that conforms to style
-    @SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
+    @SuppressWarnings("unchecked")
     public static <T> T getWrapper(ObjectBuilder<T> builder)
             throws ClassNotFoundException, IllegalAccessException,
             InstantiationException {
         // Do we have a compiled wrapper for this type?
-        Class<ICorfuSMR<T>> wrapperClass = (Class<ICorfuSMR<T>>)
-                Class.forName(builder.getType().getName() + ICorfuSMR.CORFUSMR_SUFFIX);
+        Class<ICorfuWrapper<T>> wrapperClass = (Class<ICorfuWrapper<T>>)
+                Class.forName(builder.getType().getName() + ICorfuWrapper.CORFUSMR_SUFFIX);
 
         // Instantiate a new instance of this class.
-        ICorfuSMR<T> wrapperObject = null;
+        ICorfuWrapper<T> wrapperObject = null;
         if ((builder.getArguments() == null || builder.getArguments().length == 0)) {
             try {
                 wrapperObject = wrapperClass.getDeclaredConstructor(IManagerGenerator.class)
@@ -91,18 +83,17 @@ public class CorfuCompileWrapperBuilder {
                     for (int i = 0; i < builder.getArguments().length; i++) {
                         arguments[i + 1] = builder.getArguments()[i];
                     }
-                    wrapperObject = (ICorfuSMR<T>) constructor.newInstance(arguments);
+                    wrapperObject = (ICorfuWrapper<T>) constructor.newInstance(arguments);
                     break;
                 } catch (Exception e) {
-                    e.printStackTrace();
                     // just keep trying until one works.
                 }
             }
         }
 
         if (wrapperObject == null) {
-            throw new RuntimeException("Failed to generate object, all target constructors" +
-                    " exhausted");
+            throw new RuntimeException("Failed to generate object, all target constructors"
+                    + " exhausted");
         }
 
         return (T) wrapperObject;

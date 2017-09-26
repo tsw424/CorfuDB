@@ -15,8 +15,7 @@ import org.corfudb.runtime.collections.CorfuTableTest;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.object.VersionedObjectManager;
-import org.corfudb.runtime.object.CorfuCompileProxy;
-import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.transactions.TransactionType;
 import org.corfudb.runtime.view.AbstractViewTest;
 import org.corfudb.runtime.view.ObjectBuilder;
@@ -50,11 +49,11 @@ public class FastObjectLoaderTest extends AbstractViewTest {
         return data.getSerializedForm();
     }
 
-    private <T> ICorfuSMR<T> getWrapper(CorfuRuntime cr, String streamName, Class<T> type) {
+    private <T> ICorfuWrapper<T> getWrapper(CorfuRuntime cr, String streamName, Class<T> type) {
         ObjectsView.ObjectID mapId = new ObjectsView.
                 ObjectID(CorfuRuntime.getStreamID(streamName), type);
 
-        return ((ICorfuSMR) cr.getObjectsView().
+        return ((ICorfuWrapper) cr.getObjectsView().
                 getObjectCache().
                 get(mapId));
     }
@@ -72,29 +71,6 @@ public class FastObjectLoaderTest extends AbstractViewTest {
                 .setStreamName(streamName)
                 .setType(type)
                 .open();
-    }
-
-    private void doCheckPointsAfterSnapshot(List<ICorfuSMR<Map>> maps, String author, CorfuRuntime rt){
-        try {
-            for (ICorfuSMR<Map> map : maps) {
-                UUID streamID = map.getCorfuStreamID();
-                while (true) {
-                    CheckpointWriter cpw = new CheckpointWriter(rt, streamID, author, (SMRMap) map);
-                    ISerializer serializer =
-                            ((ObjectBuilder)map.getCorfuSMRProxy())
-                                    .getSerializer();
-                    cpw.setSerializer(serializer);
-                    try {
-                        List<Long> addresses = cpw.appendCheckpoint();
-                        break;
-                    } catch (TransactionAbortedException ae) {
-                        // Don't break!
-                    }
-                }
-            }
-        } finally {
-            rt.getObjectsView().TXEnd();
-        }
     }
 
     private void assertThatObjectCacheIsTheSameSize(CorfuRuntime rt1, CorfuRuntime rt2) {
@@ -729,10 +705,10 @@ public class FastObjectLoaderTest extends AbstractViewTest {
         map2.put("k2", "v2");
         map3.put("k3", "v3");
 
-        List<ICorfuSMR<Map>> maps = new ArrayList<>();
-        maps.add((ICorfuSMR<Map>) map1);
-        maps.add((ICorfuSMR<Map>) map2);
-        maps.add((ICorfuSMR<Map>) map3);
+        List<ICorfuWrapper<Map>> maps = new ArrayList<>();
+        maps.add((ICorfuWrapper<Map>) map1);
+        maps.add((ICorfuWrapper<Map>) map2);
+        maps.add((ICorfuWrapper<Map>) map3);
 
 
         ExecutorService checkPointThread = Executors.newFixedThreadPool(1);

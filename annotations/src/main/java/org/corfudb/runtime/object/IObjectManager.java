@@ -35,4 +35,7 @@ public interface IObjectManager<T> {
      * @return
      */
     <R> R txExecute(Supplier<R> txFunction);
+
+    /** Retrieve as many updates as possible. */
+    void sync();
 }

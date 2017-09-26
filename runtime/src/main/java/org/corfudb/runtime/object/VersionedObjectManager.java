@@ -26,7 +26,7 @@ import org.corfudb.runtime.exceptions.NoRollbackException;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.object.transactions.AbstractTransaction;
 import org.corfudb.runtime.object.transactions.Transactions;
-import org.corfudb.runtime.object.transactions.WriteSetSmrStream;
+import org.corfudb.runtime.object.transactions.WriteSetStateMachineStream;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
@@ -35,7 +35,7 @@ import org.corfudb.util.Utils;
 
 /**
  * The VersionedObjectManager maintains a versioned object which is
- * backed by an ISMRStream, and is optionally backed by an additional
+ * backed by an IStateMachineStream, and is optionally backed by an additional
  * optimistic update stream.
  *
  * <p>Users of the VersionedObjectManager cannot access the versioned object
@@ -66,119 +66,6 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      */
     final Set<Long> pendingUpcalls;
 
-    @Override
-    public IStateMachineEngine getEngine() {
-        if (Transactions.active()) {
-            return Transactions.current();
-        }
-
-        return builder.getRuntime().getDefaultEngine();
-    }
-
-    @Override
-    public long getVersion() {
-        return getVersionUnsafe();
-    }
-
-    void abortTransaction(Exception e) {
-        long snapshotTimestamp;
-        AbortCause abortCause;
-        TransactionAbortedException tae;
-
-        AbstractTransaction context = Transactions.current();
-
-        if (e instanceof TransactionAbortedException) {
-            tae = (TransactionAbortedException) e;
-        } else {
-            if (e instanceof NetworkException) {
-                // If a 'NetworkException' was received within a transactional context, an attempt to
-                // 'getSnapshotTimestamp' will also fail (as it requests it to the Sequencer).
-                // A new NetworkException would prevent the earliest to be propagated and encapsulated
-                // as a TransactionAbortedException.
-                snapshotTimestamp = -1L;
-                abortCause = AbortCause.NETWORK;
-            } else if (e instanceof UnsupportedOperationException) {
-                snapshotTimestamp = Transactions.getReadSnapshot();
-                abortCause = AbortCause.UNSUPPORTED;
-            } else {
-                log.error("abort[{}] Abort Transaction with Exception {}", this, e);
-                snapshotTimestamp = Transactions.getReadSnapshot();
-                abortCause = AbortCause.UNDEFINED;
-            }
-
-            TxResolutionInfo txInfo = new TxResolutionInfo(
-                    context.getTransactionID(), snapshotTimestamp);
-            // TODO: fix...
-            tae = new TransactionAbortedException(txInfo, null, UUID.randomUUID(),
-                    abortCause, e, context);
-            context.abort(tae);
-        }
-
-
-        // Discard the transaction chain, if present.
-        try {
-            Transactions.abort();
-        } catch (TransactionAbortedException e2) {
-            // discard manual abort
-        }
-
-        throw tae;
-    }
-
-    @Override
-    public <R> R txExecute(Supplier<R> txFunction) {
-        // Don't nest transactions if we are already running transactionally
-        if (Transactions.active()) {
-            try {
-                return txFunction.get();
-            } catch (Exception e) {
-                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
-                abortTransaction(e);
-            }
-        }
-        long sleepTime = 1L;
-        final long maxSleepTime = 1000L;
-        int retries = 1;
-        while (true) {
-            try {
-                builder.getRuntime().getObjectsView().TXBegin();
-                R ret = txFunction.get();
-                builder.getRuntime().getObjectsView().TXEnd();
-                return ret;
-            } catch (TransactionAbortedException e) {
-                // If TransactionAbortedException is due to a 'Network Exception' do not keep
-                // retrying a nested transaction indefinitely (this could go on forever).
-                // If this is part of an outer transaction abort and remove from context.
-                // Re-throw exception to client.
-                log.warn("TXExecute[{}] Abort with exception {}", this, e);
-                if (e.getAbortCause() == AbortCause.NETWORK) {
-                    if (Transactions.current() != null) {
-                        try {
-                            Transactions.abort();
-                        } catch (TransactionAbortedException tae) {
-                            // discard manual abort
-                        }
-                        throw e;
-                    }
-                }
-
-                log.debug("Transactional function aborted due to {}, retrying after {} msec",
-                        e, sleepTime);
-                try {
-                    Thread.sleep(sleepTime);
-                } catch (InterruptedException ie) {
-                    log.warn("TxExecuteInner retry sleep interrupted {}", ie);
-                }
-                sleepTime = min(sleepTime * 2L, maxSleepTime);
-                retries++;
-            } catch (Exception e) {
-                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
-                abortTransaction(e);
-            }
-        }
-    }
-
-
     // This enum is necessary because null cannot be inserted
     // into a ConcurrentHashMap.
     enum NullValue {
@@ -201,17 +88,17 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     /**
      * The stream view this object is backed by.
      */
-    private final ISMRStream smrStream;
+    private final IStateMachineStream smrStream;
 
     /**
      * The optimistic SMR stream on this object, if any.
      */
-    private WriteSetSmrStream optimisticStream;
+    private WriteSetStateMachineStream optimisticStream;
 
     /**
      * The wrapper for this object.
      */
-    private final ICorfuSMR<T> wrapper;
+    private final ICorfuWrapper<T> wrapper;
 
     /**
      * A function that generates a new instance of this object.
@@ -222,7 +109,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     private final ObjectBuilder<T> builder;
 
     /**
-     * The VersionedObjectManager maintains a versioned object which is backed by an ISMRStream,
+     * The VersionedObjectManager maintains a versioned object which is backed by an IStateMachineStream,
      * and is optionally backed by an additional optimistic update stream.
      *
      * @param newObjectFn       A function passed to instantiate a new instance of this object.
@@ -230,8 +117,8 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      * @param wrapper           The wrapper for this object.
      */
     public VersionedObjectManager(Supplier<T> newObjectFn,
-                                  StreamViewSMRAdapter smrStream,
-                                  ICorfuSMR<T> wrapper,
+                                  StreamViewStateMachineAdapter smrStream,
+                                  ICorfuWrapper<T> wrapper,
                                   ObjectBuilder<T> builder) {
         this.builder = builder;
 
@@ -391,7 +278,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
         if (optimisticallyOwnedByThreadUnsafe()) {
             // If there are no updates, ensure we are at the right snapshot
             if (optimisticStream.pos() == Address.NEVER_READ) {
-                final WriteSetSmrStream currentOptimisticStream =
+                final WriteSetStateMachineStream currentOptimisticStream =
                         optimisticStream;
                 // If we are too far ahead, roll back to the past
                 if (getVersionUnsafe() > timestamp) {
@@ -463,7 +350,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     /**
      * Get a handle to the optimistic stream.
      */
-    public WriteSetSmrStream getOptimisticStreamUnsafe() {
+    public WriteSetStateMachineStream getOptimisticStreamUnsafe() {
         return optimisticStream;
     }
 
@@ -490,7 +377,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      *
      * @param optimisticStream The new optimistic stream to install.
      */
-    public void setOptimisticStreamUnsafe(WriteSetSmrStream optimisticStream) {
+    public void setOptimisticStreamUnsafe(WriteSetStateMachineStream optimisticStream) {
         if (this.optimisticStream != null) {
             optimisticRollbackUnsafe();
         }
@@ -525,17 +412,6 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     }
 
     /**
-     * Get the ID of the stream backing this object.
-     *
-     * @return The ID of the stream backing this object.
-     */
-    @Deprecated // TODO: Add replacement method that conforms to style
-    @SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
-    public UUID getID() {
-        return smrStream.getID();
-    }
-
-    /**
      * Generate the summary string for this version locked object.
      *
      * <p>The format of this string is [type]@[version][+]
@@ -545,10 +421,10 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      */
     @Override
     public String toString() {
-        WriteSetSmrStream optimisticStream = this.optimisticStream;
+        WriteSetStateMachineStream optimisticStream = this.optimisticStream;
 
         return object.getClass().getSimpleName()
-                + "[" + Utils.toReadableId(smrStream.getID()) + "]@"
+                + "[" + Utils.toReadableId(smrStream.getId()) + "]@"
                 + (getVersionUnsafe() == Address.NEVER_READ ? "NR" : getVersionUnsafe())
                 + (optimisticStream == null ? "" : "+" + optimisticStream.pos());
     }
@@ -598,7 +474,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
                 entry.getEntry() != null ? entry.getEntry().getGlobalAddress() : "OPT",
                 entry.getSMRArguments());
 
-        ICorfuSMRUpcallTarget<T> target = wrapper.getCorfuSMRUpcallMap().get(entry.getSMRMethod());
+        IStateMachineUpcall<T> target = wrapper.getCorfuSMRUpcallMap().get(entry.getSMRMethod());
         if (target == null) {
             throw new RuntimeException("Unknown upcall " + entry.getSMRMethod());
         }
@@ -646,7 +522,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      * @throws NoRollbackException If an entry in the stream did not contain
      *                             undo information.
      */
-    protected void rollbackStreamUnsafe(ISMRStream stream, long rollbackVersion) {
+    protected void rollbackStreamUnsafe(IStateMachineStream stream, long rollbackVersion) {
         // If we're already at or before the given version, there's
         // nothing to do
         if (stream.pos() <= rollbackVersion) {
@@ -693,7 +569,7 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
      * @param stream    The stream to sync forward
      * @param timestamp The timestamp to sync up to.
      */
-    protected void syncStreamUnsafe(ISMRStream stream, long timestamp) {
+    protected void syncStreamUnsafe(IStateMachineStream stream, long timestamp) {
         log.trace("Sync[{}] {}", this, (timestamp == Address.OPTIMISTIC)
                 ? "Optimistic" : "to " + timestamp);
         long syncTo = (timestamp == Address.OPTIMISTIC) ? Address.MAX : timestamp;
@@ -750,4 +626,127 @@ public class VersionedObjectManager<T> implements IObjectManager<T> {
     public Object[] getConflictFromEntry(String smrMethod, Object[] smrArguments) {
         return wrapper.getCorfuEntryToConflictMap().get(smrMethod).getConflictSet(smrArguments);
     }
+
+
+    @Override
+    public IStateMachineEngine getEngine() {
+        if (Transactions.active()) {
+            return Transactions.current();
+        }
+
+        return builder.getRuntime().getDefaultEngine();
+    }
+
+    @Override
+    public long getVersion() {
+        return getVersionUnsafe();
+    }
+
+    void abortTransaction(Exception e) {
+        long snapshotTimestamp;
+        AbortCause abortCause;
+        TransactionAbortedException tae;
+
+        AbstractTransaction context = Transactions.current();
+
+        if (e instanceof TransactionAbortedException) {
+            tae = (TransactionAbortedException) e;
+        } else {
+            if (e instanceof NetworkException) {
+                // If a 'NetworkException' was received within a transactional context, an attempt to
+                // 'getSnapshotTimestamp' will also fail (as it requests it to the Sequencer).
+                // A new NetworkException would prevent the earliest to be propagated and encapsulated
+                // as a TransactionAbortedException.
+                snapshotTimestamp = -1L;
+                abortCause = AbortCause.NETWORK;
+            } else if (e instanceof UnsupportedOperationException) {
+                snapshotTimestamp = Transactions.getReadSnapshot();
+                abortCause = AbortCause.UNSUPPORTED;
+            } else {
+                log.error("abort[{}] Abort Transaction with Exception {}", this, e);
+                snapshotTimestamp = Transactions.getReadSnapshot();
+                abortCause = AbortCause.UNDEFINED;
+            }
+
+            TxResolutionInfo txInfo = new TxResolutionInfo(
+                    context.getTransactionID(), snapshotTimestamp);
+            // TODO: fix...
+            tae = new TransactionAbortedException(txInfo, null, UUID.randomUUID(),
+                    abortCause, e, context);
+            context.abort(tae);
+        }
+
+
+        // Discard the transaction chain, if present.
+        try {
+            Transactions.abort();
+        } catch (TransactionAbortedException e2) {
+            // discard manual abort
+        }
+
+        throw tae;
+    }
+
+    @Override
+    public <R> R txExecute(Supplier<R> txFunction) {
+        // Don't nest transactions if we are already running transactionally
+        if (Transactions.active()) {
+            try {
+                return txFunction.get();
+            } catch (Exception e) {
+                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
+                abortTransaction(e);
+            }
+        }
+        long sleepTime = 1L;
+        final long maxSleepTime = 1000L;
+        int retries = 1;
+        while (true) {
+            try {
+                builder.getRuntime().getObjectsView().TXBegin();
+                R ret = txFunction.get();
+                builder.getRuntime().getObjectsView().TXEnd();
+                return ret;
+            } catch (TransactionAbortedException e) {
+                // If TransactionAbortedException is due to a 'Network Exception' do not keep
+                // retrying a nested transaction indefinitely (this could go on forever).
+                // If this is part of an outer transaction abort and remove from context.
+                // Re-throw exception to client.
+                log.warn("TXExecute[{}] Abort with exception {}", this, e);
+                if (e.getAbortCause() == AbortCause.NETWORK) {
+                    if (Transactions.current() != null) {
+                        try {
+                            Transactions.abort();
+                        } catch (TransactionAbortedException tae) {
+                            // discard manual abort
+                        }
+                        throw e;
+                    }
+                }
+
+                log.debug("Transactional function aborted due to {}, retrying after {} msec",
+                        e, sleepTime);
+                try {
+                    Thread.sleep(sleepTime);
+                } catch (InterruptedException ie) {
+                    log.warn("TxExecuteInner retry sleep interrupted {}", ie);
+                }
+                sleepTime = min(sleepTime * 2L, maxSleepTime);
+                retries++;
+            } catch (Exception e) {
+                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
+                abortTransaction(e);
+            }
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void sync() {
+        update(o -> {
+            o.syncObjectUnsafe(Address.MAX);
+            return null;
+        });
+    }
+
 }

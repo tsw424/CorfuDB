@@ -12,7 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.TokenResponse;
-import org.corfudb.runtime.object.ISMRStream;
+import org.corfudb.runtime.object.IStateMachineStream;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.util.Utils;
 
@@ -49,17 +49,17 @@ import org.corfudb.util.Utils;
  *
  * <p>RemainingUpTo() returns a list of entries.
  *
- * <p>WriteSetSmrStream does not support the full API - neither append nor seek are
+ * <p>WriteSetStateMachineStream does not support the full API - neither append nor seek are
  * supported.
  *
  * <p>Enter nested transactions.
  *
- * <p>WriteSetSmrStream maintains the abstractions also across nested transactions.
+ * <p>WriteSetStateMachineStream maintains the abstractions also across nested transactions.
  * It supports navigating forward/backward across the SMREntries in the entire transcation stack.
  *
  */
 @Slf4j
-public class WriteSetSmrStream implements ISMRStream {
+public class WriteSetStateMachineStream implements IStateMachineStream {
 
     /** The write set that backs this stream. */
     final WriteSet writeSet;
@@ -72,13 +72,13 @@ public class WriteSetSmrStream implements ISMRStream {
     long pointer;
 
     /**
-     * Constructs a new WriteSetSmrStream using a write set and a stream Id.
+     * Constructs a new WriteSetStateMachineStream using a write set and a stream Id.
      *
      * @param writeSet  The write set which will back this stream.
      * @param id        The Id of the updates to follow.
      */
-    public WriteSetSmrStream(WriteSet writeSet,
-                             UUID id) {
+    public WriteSetStateMachineStream(WriteSet writeSet,
+                                      UUID id) {
         this.writeSet = writeSet;
         this.id = id;
         this.pointer = Address.NEVER_READ;
@@ -178,26 +178,15 @@ public class WriteSetSmrStream implements ISMRStream {
                 .stream();
     }
 
-    /** {@inheritDoc}
-     *
-     * This operation is not supported on this stream. Write into the active context instead.
-     * */
-    @Override
-    public long append(SMREntry entry,
-                       Function<TokenResponse, Boolean> acquisitionCallback,
-                       Function<TokenResponse, Boolean> deacquisitionCallback) {
-        throw new UnsupportedOperationException();
-    }
-
     /** {@inheritDoc} */
     @Override
-    public UUID getID() {
+    public UUID getId() {
         return id;
     }
 
     /** {@inheritDoc} */
     @Override
     public String toString() {
-        return "WSSMRStream[" + Utils.toReadableId(getID()) + "]";
+        return "WSSMRStream[" + Utils.toReadableId(getId()) + "]";
     }
 }

@@ -6,15 +6,13 @@ import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
 
-import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.exceptions.TrimmedException;
+import org.corfudb.runtime.object.ICorfuWrapper;
 import org.corfudb.runtime.object.VersionedObjectManager;
-import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.ICorfuSMRAccess;
-import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
+import org.corfudb.runtime.object.IStateMachineAccess;
 import org.corfudb.runtime.object.IStateMachineEngine;
 import org.corfudb.util.Utils;
 
@@ -109,8 +107,8 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
      * @param <T>            The type of the proxy's underlying object.
      * @return The return value of the access function.
      */
-    public abstract <R, T> R access(ICorfuSMR<T> proxy,
-                                    ICorfuSMRAccess<R, T> accessFunction,
+    public abstract <R, T> R access(ICorfuWrapper<T> proxy,
+                                    IStateMachineAccess<R, T> accessFunction,
                                     Object[] conflictObject);
 
     /**
@@ -122,13 +120,13 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
      * @param <T>            The type of the proxy's underlying object.
      * @return The result of the upcall.
      */
-    public abstract <T, R> R getUpcallResult(ICorfuSMR<T> proxy,
+    public abstract <T, R> R getUpcallResult(ICorfuWrapper<T> proxy,
                                                long timestamp,
                                                Object[] conflictObject);
 
     public void syncWithRetryUnsafe(VersionedObjectManager vlo,
                                     long snapshotTimestamp,
-                                    ICorfuSMR wrapper,
+                                    ICorfuWrapper wrapper,
                                     @Nullable Consumer<VersionedObjectManager> optimisticStreamSetter)
     {
         for (int x = 0; x < this.builder.getRuntime().getTrimRetry(); x++) {
@@ -153,7 +151,7 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
                             new TransactionAbortedException(
                                     new TxResolutionInfo(getTransactionID(),
                                             snapshotTimestamp), null,
-                                    wrapper.getCorfuStreamID(),
+                                    wrapper.getId$CORFU(),
                                     AbortCause.TRIM, te, this);
                     abort(tae);
                     throw tae;
@@ -171,7 +169,7 @@ public abstract class AbstractTransaction implements IStateMachineEngine {
      * @param <T>            The type of the proxy's underlying object.
      * @return The address the update was written at.
      */
-    public abstract <T> long logUpdate(ICorfuSMR<T> proxy, String smrUpdateFunction,
+    public abstract <T> long logUpdate(ICorfuWrapper<T> proxy, String smrUpdateFunction,
                                        boolean keepUpcallResult,
                                        Object[] conflictObject, Object... args);
 

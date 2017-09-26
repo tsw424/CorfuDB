@@ -12,5 +12,5 @@ public interface IManagerGenerator<T> {
      * @param wrapper   The wrapper to generate a manager for.
      * @return          An object manager.
      */
-    IObjectManager<T> generate(ICorfuSMR<T> wrapper);
+    IObjectManager<T> generate(ICorfuWrapper<T> wrapper);
 }

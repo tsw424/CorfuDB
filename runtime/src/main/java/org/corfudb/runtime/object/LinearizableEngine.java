@@ -22,18 +22,18 @@ public class LinearizableEngine implements IStateMachineEngine {
 
     /** {@inheritDoc} */
     @Override
-    public <R, T> R access(ICorfuSMR<T> wrapper,
-                           ICorfuSMRAccess<R, T> accessFunction,
+    public <R, T> R access(ICorfuWrapper<T> wrapper,
+                           IStateMachineAccess<R, T> accessFunction,
                            Object[] conflictObject) {
 
         // Linearize this read against a timestamp
         final long timestamp =
                 runtime.getSequencerView()
-                        .nextToken(Collections.singleton(wrapper.getCorfuStreamID()),
+                        .nextToken(Collections.singleton(wrapper.getId$CORFU()),
                                 0).getToken()
                         .getTokenValue();
         log.debug("access[{}] conflictObj={} version={}",
-                Utils.toReadableId(wrapper.getCorfuStreamID()), conflictObject, timestamp);
+                Utils.toReadableId(wrapper.getId$CORFU()), conflictObject, timestamp);
 
         // Perform underlying access
         try {
@@ -44,7 +44,7 @@ public class LinearizableEngine implements IStateMachineEngine {
                     o -> accessFunction.access(o));
         } catch (TrimmedException te) {
             log.warn("access[{}] Encountered Trim, reset and retry",
-                    Utils.toReadableId(wrapper.getCorfuStreamID()));
+                    Utils.toReadableId(wrapper.getId$CORFU()));
             // We encountered a TRIM during sync, reset the object
             ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU()).update(o -> {
                 o.resetUnsafe();
@@ -57,7 +57,7 @@ public class LinearizableEngine implements IStateMachineEngine {
 
     /** {@inheritDoc} */
     @Override
-    public <T> long logUpdate(ICorfuSMR<T> wrapper,
+    public <T> long logUpdate(ICorfuWrapper<T> wrapper,
                               String smrUpdateFunction,
                               boolean keepUpcallResult,
                               Object[] conflictObject,
@@ -66,17 +66,20 @@ public class LinearizableEngine implements IStateMachineEngine {
         // We need to add the acquired token into the pending upcall list.
         SMREntry smrEntry = new SMREntry(smrUpdateFunction, args,
                 ((ObjectBuilder<T>)wrapper.getCorfuBuilder()).getSerializer());
+
+
         long address = ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
                                                 .logUpdate(smrEntry, keepUpcallResult);
+
         log.trace("update[{}] {}@{} ({}) conflictObj={}",
-                Utils.toReadableId(wrapper.getCorfuStreamID()),
+                Utils.toReadableId(wrapper.getId$CORFU()),
                 smrUpdateFunction, address, args, conflictObject);
         return address;
     }
 
     /** {@inheritDoc} */
     @Override
-    public <T, R> R getUpcallResult(ICorfuSMR<T> wrapper,
+    public <T, R> R getUpcallResult(ICorfuWrapper<T> wrapper,
                                     long address,
                                     Object[] conflictObject) {
         // Check first if we have the upcall, if we do

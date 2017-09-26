@@ -26,7 +26,6 @@ import org.corfudb.protocols.wireprotocol.DataType;
 import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.SMRMap;
-import org.corfudb.runtime.object.CorfuCompileProxy;
 import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.ObjectBuilder;
