@@ -40,13 +40,13 @@ public class FGMap<K, V> extends AbstractCorfuWrapper<FGMap<K,V>> implements Map
 
     @PassThrough
     UUID getStreamID(int partition) {
-        return new UUID(getStreamID().getMostSignificantBits(),
-                getStreamID().getLeastSignificantBits() + (partition + 1));
+        return new UUID(getStreamId().getMostSignificantBits(),
+                getStreamId().getLeastSignificantBits() + (partition + 1));
     }
 
     @PassThrough
     Map<K, V> getPartitionMap(int partition) {
-        return getBuilder()
+        return getNewBuilder()
                 .setTypeToken(new TypeToken<SMRMap<K,V>>() {})
                 .setStreamID(getStreamID(partition))
                 .open();

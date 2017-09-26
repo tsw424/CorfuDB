@@ -27,6 +27,7 @@ import org.corfudb.protocols.wireprotocol.ILogData;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.object.CorfuCompileProxy;
+import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.runtime.view.Address;
 import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
@@ -270,12 +271,13 @@ public class FastObjectLoader {
             // If it is a special type, create it with the object builder
             if (objectType != defaultObjectsType) {
                 createObjectIfNotExist(customTypeStreams.get(streamId), serializer);
-            }
-            else {
+            } else {
                 createObjectIfNotExist(runtime, streamId, serializer, objectType);
             }
-            CorfuCompileProxy cp = getCorfuCompileProxy(runtime, streamId, objectType);
-            cp.getUnderlyingObject().applyUpdateToStreamUnsafe(entry, globalAddress);
+
+            ((VersionedObjectManager)getWrapper(runtime, streamId, objectType)
+                    .getObjectManager$CORFU())
+                    .applyUpdateToStreamUnsafe(entry, globalAddress);
         }
     }
 

@@ -56,7 +56,7 @@ public class RecoveryUtils {
 
     static void createObjectIfNotExist(ObjectBuilder ob, ISerializer serializer) {
         if (!ob.getRuntime().getObjectsView().getObjectCache()
-                .containsKey(RecoveryUtils.getObjectIdFromStreamId(ob.getStreamID(), ob.getType()))){
+                .containsKey(RecoveryUtils.getObjectIdFromStreamId(ob.getStreamId(), ob.getType()))){
                 ob.setSerializer(serializer).open();
         }
     }
@@ -114,9 +114,8 @@ public class RecoveryUtils {
      * @param streamId
      * @return
      */
-    static CorfuCompileProxy getCorfuCompileProxy(CorfuRuntime runtime, UUID streamId, Class type) {
+    static <T> ICorfuSMR<T> getWrapper(CorfuRuntime runtime, UUID streamId, Class<T> type) {
         ObjectsView.ObjectID thisObjectId = new ObjectsView.ObjectID(streamId, type);
-        return ((CorfuCompileProxy) ((ICorfuSMR) runtime.getObjectsView().getObjectCache().get(thisObjectId)).
-                getCorfuSMRProxy());
+        return (ICorfuSMR<T>) runtime.getObjectsView().getObjectCache().get(thisObjectId);
     }
 }

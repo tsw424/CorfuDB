@@ -24,7 +24,6 @@ import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.TokenResponse;
 import org.corfudb.runtime.object.CorfuCompileProxy;
 import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.transactions.AbstractTransaction;
 import org.corfudb.runtime.object.transactions.TransactionType;
 import org.corfudb.runtime.object.transactions.Transactions;
 import org.corfudb.runtime.view.StreamsView;
@@ -169,7 +168,7 @@ public class CheckpointWriter<T extends Map> {
         // Need the actual object's version
         ICorfuSMR<T> corfuObject = (ICorfuSMR<T>) this.map;
         this.mdkv.put(CheckpointEntry.CheckpointDictKey.START_LOG_ADDRESS,
-                Long.toString(corfuObject.getCorfuSMRProxy().getVersion()));
+                Long.toString(corfuObject.getObjectManager$CORFU().getVersion()));
         this.mdkv.put(CheckpointEntry.CheckpointDictKey.SNAPSHOT_ADDRESS,
                 Long.toString(txBeginGlobalAddress));
 
@@ -212,9 +211,8 @@ public class CheckpointWriter<T extends Map> {
                 ImmutableMap.copyOf(this.mdkv);
         List<Long> continuationAddresses = new ArrayList<>();
 
-        Class underlyingObjectType = ((CorfuCompileProxy<Map>)
-                ((ICorfuSMR<T>) map).getCorfuSMRProxy())
-                .getObjectType();
+        Class underlyingObjectType =
+                ((ICorfuSMR<T>) map).getCorfuBuilder().getType();
 
         if (enablePutAll) {
             Iterable<List<Object>> partitions = Iterables.partition(map.keySet(), batchSize);

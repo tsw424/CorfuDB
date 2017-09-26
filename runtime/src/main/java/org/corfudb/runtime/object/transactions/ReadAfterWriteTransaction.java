@@ -1,6 +1,6 @@
 package org.corfudb.runtime.object.transactions;
 
-import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
+import org.corfudb.runtime.object.ICorfuSMR;
 
 public class ReadAfterWriteTransaction
         extends AbstractOptimisticTransaction {
@@ -10,9 +10,9 @@ public class ReadAfterWriteTransaction
     }
 
     @Override
-    protected <T> void addToReadSet(ICorfuSMRProxyInternal<T> proxy,
+    protected <T> void addToReadSet(ICorfuSMR<T> wrapper,
                                        Object[] conflictObject) {
-        Transactions.getContext().getConflictSet().add(proxy, conflictObject);
+        Transactions.getContext().getConflictSet().add(wrapper, conflictObject);
     }
 
 }

@@ -11,5 +11,9 @@ public interface ICorfuSMRProxyWrapper<T> {
      * method from processing.
      * @param proxy The proxy to use for the wrapper methods.
      */
-    void setProxy$CORFUSMR(ICorfuSMRProxy<T> proxy);
+    void setProxy$CORFU(ICorfuSMRProxy<T> proxy);
+
+    default IObjectManager<T> getObjectManager$CORFU() {
+        throw new RuntimeException("Instrumenation failed, manager not present!");
+    }
 }

@@ -14,9 +14,9 @@ import org.corfudb.runtime.collections.CorfuTable;
 import org.corfudb.runtime.collections.CorfuTableTest;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.runtime.object.CorfuCompileProxy;
 import org.corfudb.runtime.object.ICorfuSMR;
-import org.corfudb.runtime.object.VersionLockedObject;
 import org.corfudb.runtime.object.transactions.TransactionType;
 import org.corfudb.runtime.view.AbstractViewTest;
 import org.corfudb.runtime.view.ObjectBuilder;
@@ -50,19 +50,17 @@ public class FastObjectLoaderTest extends AbstractViewTest {
         return data.getSerializedForm();
     }
 
-    private CorfuCompileProxy getCorfuCompileProxy(CorfuRuntime cr, String streamName, Class type) {
+    private <T> ICorfuSMR<T> getWrapper(CorfuRuntime cr, String streamName, Class<T> type) {
         ObjectsView.ObjectID mapId = new ObjectsView.
                 ObjectID(CorfuRuntime.getStreamID(streamName), type);
 
-        return ((CorfuCompileProxy) ((ICorfuSMR) cr.getObjectsView().
+        return ((ICorfuSMR) cr.getObjectsView().
                 getObjectCache().
-                get(mapId)).
-                getCorfuSMRProxy());
+                get(mapId));
     }
 
-    private VersionLockedObject getVersionLockedObject(CorfuRuntime cr, String streamName, Class type) {
-        CorfuCompileProxy cp = getCorfuCompileProxy(cr, streamName, type);
-        return cp.getUnderlyingObject();
+    private VersionedObjectManager getVersionLockedObject(CorfuRuntime cr, String streamName, Class type) {
+        return (VersionedObjectManager) getWrapper(cr, streamName, type).getObjectManager$CORFU();
     }
 
     private  Map<String, String> createMap(String streamName, CorfuRuntime cr) {
@@ -83,7 +81,7 @@ public class FastObjectLoaderTest extends AbstractViewTest {
                 while (true) {
                     CheckpointWriter cpw = new CheckpointWriter(rt, streamID, author, (SMRMap) map);
                     ISerializer serializer =
-                            ((CorfuCompileProxy<Map>) map.getCorfuSMRProxy())
+                            ((ObjectBuilder)map.getCorfuSMRProxy())
                                     .getSerializer();
                     cpw.setSerializer(serializer);
                     try {
@@ -112,9 +110,9 @@ public class FastObjectLoaderTest extends AbstractViewTest {
     private void assertThatMapIsBuilt(CorfuRuntime rt1, CorfuRuntime rt2, String streamName,
                                       Map<String, String> map, Class type) {
 
-        // Get raw maps (VersionLockedObject)
-        VersionLockedObject vo1 = getVersionLockedObject(rt1, streamName, type);
-        VersionLockedObject vo1Prime = getVersionLockedObject(rt2, streamName, type);
+        // Get raw maps (VersionedObjectManager)
+        VersionedObjectManager vo1 = getVersionLockedObject(rt1, streamName, type);
+        VersionedObjectManager vo1Prime = getVersionLockedObject(rt2, streamName, type);
 
         // Assert that UnderlyingObjects are at the same version
         // If they are at the same version, a sync on the object will
@@ -1227,7 +1225,9 @@ public class FastObjectLoaderTest extends AbstractViewTest {
                 .setStreamName("test")
                 .open();
 
-        assertThat(getCorfuCompileProxy(recreatedRuntime, "test", SMRMap.class).getSerializer()).isEqualTo(customSerializer);
+        assertThat(((ObjectBuilder)getWrapper(recreatedRuntime, "test", SMRMap.class)
+                .getCorfuBuilder())
+                .getSerializer()).isEqualTo(customSerializer);
 
     }
 
@@ -1257,9 +1257,9 @@ public class FastObjectLoaderTest extends AbstractViewTest {
                 .setType(CorfuTable.class)
                 .setStreamName("test")
                 .open();
-        // Get raw maps (VersionLockedObject)
-        VersionLockedObject vo1 = getVersionLockedObject(originalRuntime, "test", CorfuTable.class);
-        VersionLockedObject vo1Prime = getVersionLockedObject(recreatedRuntime, "test", CorfuTable.class);
+        // Get raw maps (VersionedObjectManager)
+        VersionedObjectManager vo1 = getVersionLockedObject(originalRuntime, "test", CorfuTable.class);
+        VersionedObjectManager vo1Prime = getVersionLockedObject(recreatedRuntime, "test", CorfuTable.class);
 
         // Assert that UnderlyingObjects are at the same version
         // If they are at the same version, a sync on the object will
@@ -1435,9 +1435,9 @@ public class FastObjectLoaderTest extends AbstractViewTest {
                 .setType(CorfuTable.class)
                 .setStreamName("test")
                 .open();
-        // Get raw maps (VersionLockedObject)
-        VersionLockedObject vo1 = getVersionLockedObject(originalRuntime, "test", CorfuTable.class);
-        VersionLockedObject vo1Prime = getVersionLockedObject(recreatedRuntime, "test", CorfuTable.class);
+        // Get raw maps (VersionedObjectManager)
+        VersionedObjectManager vo1 = getVersionLockedObject(originalRuntime, "test", CorfuTable.class);
+        VersionedObjectManager vo1Prime = getVersionLockedObject(recreatedRuntime, "test", CorfuTable.class);
 
         // Assert that UnderlyingObjects are at the same version
         // If they are at the same version, a sync on the object will
@@ -1446,7 +1446,9 @@ public class FastObjectLoaderTest extends AbstractViewTest {
 
         assertThat(recreatedTable.get("a")).isEqualTo("b");
 
-        assertThat(getCorfuCompileProxy(recreatedRuntime, "test", CorfuTable.class).getSerializer())
+        assertThat(
+                ((ObjectBuilder)getWrapper(recreatedRuntime, "test", CorfuTable.class)
+                .getCorfuBuilder()).getSerializer())
                 .isEqualTo(customSerializer);
 
     }

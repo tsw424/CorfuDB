@@ -10,7 +10,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import lombok.NonNull;
@@ -23,12 +22,13 @@ import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.exceptions.TrimmedException;
+import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.runtime.object.ICorfuSMRAccess;
-import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
 import org.corfudb.runtime.object.ISMRStream;
 import org.corfudb.runtime.object.StreamViewSMRAdapter;
-import org.corfudb.runtime.object.VersionLockedObject;
 import org.corfudb.runtime.view.Address;
+import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.runtime.view.stream.IStreamView;
 import org.corfudb.util.Utils;
 
@@ -68,27 +68,25 @@ public abstract class AbstractOptimisticTransaction extends
 
     /** Add a proxy and a set of conflicts to the read set of this transaction.
      *
-     * @param proxy             The proxy to add
      * @param conflictObject    The set of conflicts to add
      * @param <T>               The type of the proxy being added.
      */
-    protected <T> void addToReadSet(ICorfuSMRProxyInternal<T> proxy,
+    protected <T> void addToReadSet(ICorfuSMR<T> wrapper,
                                       Object[] conflictObject) { }
 
 
     /** Add a proxy and a set of conflicts to the write set of this transaction.
      *
-     * @param proxy             The proxy to add
      * @param updateEntry       Update to add
      * @param conflictObject    The set of conflicts to add
      * @param <T>               The type of the proxy being added
      * @return                  The address (in an optimistic write set) the update was
      *                          written to.
      */
-    protected <T> long addToWriteSet(ICorfuSMRProxyInternal<T> proxy,
+    protected <T> long addToWriteSet(ICorfuSMR<T> wrapper,
                                        SMREntry updateEntry,
                                        Object[] conflictObject) {
-        return Transactions.getContext().getWriteSet().add(proxy, updateEntry, conflictObject);
+        return Transactions.getContext().getWriteSet().add(wrapper, updateEntry, conflictObject);
     }
 
     /**
@@ -110,26 +108,25 @@ public abstract class AbstractOptimisticTransaction extends
      * {@inheritDoc}
      */
     @Override
-    public <R, T> R access(ICorfuSMRProxyInternal<T> proxy,
+    public <R, T> R access(ICorfuSMR<T> wrapper,
                            ICorfuSMRAccess<R, T> accessFunction,
                            Object[] conflictObject) {
-        log.debug("Access[{},{}] conflictObj={}", this, proxy, conflictObject);
-        addToReadSet(proxy, conflictObject);
+        log.debug("Access[{},{}] conflictObj={}", this, wrapper, conflictObject);
+        addToReadSet(wrapper, conflictObject);
         // Next, we sync the object, which will bring the object
         // to the correct version, reflecting any optimistic
         // updates.
-        return proxy
-                .getUnderlyingObject()
+        return ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
                 .access(o -> o.optimisticallyOwnedByThreadUnsafe()
                                     && Transactions.getContext().getWriteSet()
-                                    .getWriteSet().getSMRUpdates(proxy.getStreamID()).size()
+                                    .getWriteSet().getSMRUpdates(wrapper.getCorfuStreamID()).size()
                                 == o.getOptimisticStreamUnsafe().pos(),
                         o -> {
                             // inside syncObjectUnsafe, depending on the object
                             // version, we may need to undo or redo
                             // committed changes, or apply forward committed changes.
                             syncWithRetryUnsafe(o, obtainSnapshotTimestamp(),
-                                    proxy, this::setAsOptimisticStream);
+                                    wrapper, this::setAsOptimisticStream);
                         },
                     o -> accessFunction.access(o)
         );
@@ -151,32 +148,34 @@ public abstract class AbstractOptimisticTransaction extends
      * {@inheritDoc}
      */
     @Override
-    public <T> Object getUpcallResult(ICorfuSMRProxyInternal<T> proxy,
+    public <T, R> R getUpcallResult(ICorfuSMR<T> wrapper,
                                       long timestamp, Object[] conflictObject) {
         // Getting an upcall result adds the object to the conflict set.
-        addToReadSet(proxy, conflictObject);
+        addToReadSet(wrapper, conflictObject);
 
         // if we have a result, return it.
-        SMREntry wrapper = Transactions.getContext().getWriteSet().getWriteSet()
-                .getSMRUpdates(proxy.getStreamID()).get((int)timestamp);
-        if (wrapper != null && wrapper.isHaveUpcallResult()) {
-            return wrapper.getUpcallResult();
+        SMREntry entry = Transactions.getContext().getWriteSet().getWriteSet()
+                .getSMRUpdates(wrapper.getCorfuStreamID()).get((int)timestamp);
+        if (entry!= null && entry.isHaveUpcallResult()) {
+            return (R) entry.getUpcallResult();
         }
         // Otherwise, we need to sync the object
-        return proxy.getUnderlyingObject().update(o -> {
+        return ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
+                .update(o -> {
             log.trace("Upcall[{}] {} Sync'd", this,  timestamp);
-            syncWithRetryUnsafe(o, obtainSnapshotTimestamp(), proxy, this::setAsOptimisticStream);
+            syncWithRetryUnsafe(o, obtainSnapshotTimestamp(), wrapper, this::setAsOptimisticStream);
             SMREntry wrapper2 = Transactions.getContext().getWriteSet().getWriteSet()
-                    .getSMRUpdates(proxy.getStreamID()).get((int)timestamp);
+                    .getSMRUpdates(wrapper.getCorfuStreamID()).get((int)timestamp);
             if (wrapper2 != null && wrapper2.isHaveUpcallResult()) {
-                return wrapper2.getUpcallResult();
+                return (R) wrapper2.getUpcallResult();
             }
             // If we still don't have the upcall, this must be a bug.
             throw new RuntimeException("Tried to get upcall during a transaction but"
                     + " we don't have it even after an optimistic sync (asked for " + timestamp
                     + " we have " + (Transactions.getContext().getWriteSet().getWriteSet()
-                    .getSMRUpdates(proxy.getStreamID()).size()) + ", stream is at "
-                    + proxy.getUnderlyingObject().getOptimisticStreamUnsafe().pos() + ")");
+                    .getSMRUpdates(wrapper.getCorfuStreamID()).size()) + ", stream is at "
+                    + ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
+                                        .getOptimisticStreamUnsafe().pos() + ")");
         });
     }
 
@@ -188,7 +187,7 @@ public abstract class AbstractOptimisticTransaction extends
      * @param object        Underlying object under transaction
      * @param <T>           Type of the underlying object
      */
-    <T> void setAsOptimisticStream(VersionLockedObject<T> object) {
+    <T> void setAsOptimisticStream(VersionedObjectManager<T> object) {
         WriteSetSmrStream stream = object.getOptimisticStreamUnsafe();
         if (stream == null
                 || !stream.isStreamForThisThread()) {
@@ -203,25 +202,21 @@ public abstract class AbstractOptimisticTransaction extends
         }
     }
 
-    /** Logs an update. In the case of an optimistic transaction, this update
-     * is logged to the write set for the transaction.
-     *
-     * <p>Return the "address" of the update; used for retrieving results
-     * from operations via getUpcallRestult.
-     *
-     * @param proxy         The proxy making the request.
-     * @param updateEntry   The timestamp of the request.
-     * @param <T>           The type of the proxy.
-     * @return              The "address" that the update was written to.
+    /**
+     * {@inheritDoc}
      */
     @Override
-    public <T> long logUpdate(ICorfuSMRProxyInternal<T> proxy,
-                              SMREntry updateEntry,
-                              Object[] conflictObjects) {
-        log.trace("LogUpdate[{},{}] {} ({}) conflictObj={}",
-                this, proxy, updateEntry.getSMRMethod(),
-                updateEntry.getSMRArguments(), conflictObjects);
-        return addToWriteSet(proxy, updateEntry, conflictObjects);
+    public <T> long logUpdate(ICorfuSMR<T> wrapper,
+                              String smrUpdateFunction, boolean keepUpcallResult,
+                              Object[] conflictObject, Object... args) {
+
+        SMREntry updateEntry = new SMREntry(smrUpdateFunction, args,
+                ((ObjectBuilder)wrapper.getCorfuBuilder()).getSerializer());
+
+        log.trace("LogUpdate[{}] {} ({}) conflictObj={}",
+                this, updateEntry.getSMRMethod(),
+                updateEntry.getSMRArguments(), conflictObject);
+        return addToWriteSet(wrapper, updateEntry, conflictObject);
     }
 
 
@@ -316,7 +311,7 @@ public abstract class AbstractOptimisticTransaction extends
      * @throws TransactionAbortedException  If the transaction must be aborted.
      */
     protected long preciseCommit(@Nonnull final TransactionAbortedException originalException,
-                                 @NonNull final Map<ICorfuSMRProxyInternal, Set<Object>>
+                                 @NonNull final Map<ICorfuSMR, Set<Object>>
                                          conflictSet,
                                  @NonNull final Map<UUID, Set<byte[]>> hashedConflictSet,
                                  @NonNull final Set<UUID> affectedStreams) {
@@ -340,19 +335,19 @@ public abstract class AbstractOptimisticTransaction extends
             // Get the proxy, which should be available either in the write set
             // or read set. We need the proxy to generate the conflict objects
             // from the SMR entry.
-            ICorfuSMRProxyInternal proxy;
-            Optional<ICorfuSMRProxyInternal> modifyProxy =
+            ICorfuSMR proxy;
+            Optional<ICorfuSMR> modifyProxy =
                     context.getWriteSet()
                             .getConflicts().keySet()
                             .stream()
-                            .filter(p -> p.getStreamID().equals(conflictStream))
+                            .filter(p -> p.getCorfuStreamID().equals(conflictStream))
                             .findFirst();
             if (modifyProxy.isPresent()) {
                 proxy = modifyProxy.get();
             } else {
-                modifyProxy = context.getConflictSet().getProxy(conflictStream);
+                modifyProxy = context.getConflictSet().getWrapper(conflictStream);
                 if (!modifyProxy.isPresent()) {
-                    modifyProxy = context.getWriteSet().getProxy(conflictStream);
+                    modifyProxy = context.getWriteSet().getWrapper(conflictStream);
                     if (!modifyProxy.isPresent()) {
                         log.warn("preciseCommit[{}]: precise conflict resolution requested "
                                 + "but proxy not found, aborting", this);
@@ -381,13 +376,14 @@ public abstract class AbstractOptimisticTransaction extends
                 smrStream.streamUpTo(currentAddress)
                         .forEach(x -> {
                             Object[] conflicts =
-                                    proxy.getConflictFromEntry(x.getSMRMethod(),
+                                    ((VersionedObjectManager)proxy.getObjectManager$CORFU())
+                                            .getConflictFromEntry(x.getSMRMethod(),
                                             x.getSMRArguments());
                             log.trace("preciseCommit[{}]: found conflicts {}", this, conflicts);
                             if (conflicts != null) {
                                 Optional<Set<Object>> conflictObjects =
                                         conflictSet.entrySet().stream()
-                                                .filter(e -> e.getKey().getStreamID()
+                                                .filter(e -> e.getKey().getCorfuStreamID()
                                                         .equals(conflictStream))
                                                 .map(Map.Entry::getValue)
                                                 .findAny();
@@ -460,12 +456,14 @@ public abstract class AbstractOptimisticTransaction extends
                 .getAddressSpaceView().read(address);
 
         updateAllProxies(x -> {
-            log.trace("Commit[{}] Committing {}", this,  x);
+            // Sync all our optimistic updates.
+            ((VersionedObjectManager)x.getObjectManager$CORFU()).syncObjectUnsafe(
+                    Transactions.getReadSnapshot());
             // Commit all the optimistic updates
-            x.getUnderlyingObject().optimisticCommitUnsafe();
+            ((VersionedObjectManager)x.getObjectManager$CORFU()).optimisticCommitUnsafe();
             // If some other client updated this object, sync
             // it forward to grab those updates
-            x.getUnderlyingObject().syncObjectUnsafe(
+            ((VersionedObjectManager)x.getObjectManager$CORFU()).syncObjectUnsafe(
                     address - 1);
             // Also, be nice and transfer the undo
             // log from the optimistic updates
@@ -473,11 +471,11 @@ public abstract class AbstractOptimisticTransaction extends
             // be the same
             List<SMREntry> committedWrites =
                     Transactions.getContext().getWriteSet().getWriteSet()
-                            .getSMRUpdates(x.getStreamID());
+                            .getSMRUpdates(x.getCorfuStreamID());
             List<SMREntry> entryWrites =
                     ((ISMRConsumable) committedEntry
                             .getPayload(this.getBuilder().runtime))
-                            .getSMRUpdates(x.getStreamID());
+                            .getSMRUpdates(x.getCorfuStreamID());
             if (committedWrites.size()
                     == entryWrites.size()) {
                 IntStream.range(0, committedWrites.size())
@@ -491,22 +489,21 @@ public abstract class AbstractOptimisticTransaction extends
                         });
             }
             // and move the stream pointer to "skip" this commit entry
-            x.getUnderlyingObject().seek(address + 1);
-            log.trace("Commit[{}] Committed {}", this,  x);
+            ((VersionedObjectManager)x.getObjectManager$CORFU()).seek(address + 1);
         });
 
     }
 
     @SuppressWarnings("unchecked")
-    protected void updateAllProxies(Consumer<ICorfuSMRProxyInternal> function) {
+    protected void updateAllProxies(Consumer<ICorfuSMR> function) {
         Transactions.getContext().getWriteSet().getConflicts().keySet().forEach(x -> {
             // If we are on the same thread, this will hold true.
-            if (x.getUnderlyingObject()
+            if (((VersionedObjectManager)x.getObjectManager$CORFU())
                     .optimisticallyOwnedByThreadUnsafe()) {
-                x.getUnderlyingObject().update(o -> {
+                ((VersionedObjectManager)x.getObjectManager$CORFU()).update(o -> {
                     // Make sure we're still the modifying thread
                     // even after getting the lock.
-                    if (x.getUnderlyingObject()
+                    if (((VersionedObjectManager)x.getObjectManager$CORFU())
                             .optimisticallyOwnedByThreadUnsafe()) {
                         function.accept(x);
                     }

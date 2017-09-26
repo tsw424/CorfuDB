@@ -15,6 +15,7 @@ import org.corfudb.protocols.logprotocol.CheckpointEntry;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.object.CorfuCompileProxy;
 import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
 import org.corfudb.util.serializer.ISerializer;
 
@@ -84,7 +85,7 @@ public class MultiCheckpointWriter<T extends Map> {
                     CheckpointWriter<T> cpw = new CheckpointWriter(rt, streamId, author, (T) map);
                     cpw.setEnablePutAll(enablePutAll);
                     ISerializer serializer =
-                            ((CorfuCompileProxy<Map>) map.getCorfuSMRProxy())
+                            ((ObjectBuilder) map.getObjectManager$CORFU().getBuilder())
                                     .getSerializer();
                     cpw.setSerializer(serializer);
                     cpw.setPostAppendFunc(postAppendFunc);

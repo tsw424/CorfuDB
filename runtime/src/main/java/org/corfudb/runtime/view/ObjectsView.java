@@ -17,11 +17,11 @@ import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
 import org.corfudb.runtime.object.CorfuCompileWrapperBuilder;
 import org.corfudb.runtime.object.ICorfuSMR;
+import org.corfudb.runtime.object.IObjectBuilder;
 import org.corfudb.runtime.object.transactions.TransactionBuilder;
 import org.corfudb.runtime.object.transactions.TransactionType;
 import org.corfudb.runtime.object.transactions.Transactions;
 import org.corfudb.runtime.view.stream.IStreamView;
-import org.corfudb.util.serializer.Serializers;
 
 /**
  * A view of the objects inside a Corfu instance.
@@ -67,16 +67,22 @@ public class ObjectsView extends AbstractView {
      */
     @SuppressWarnings("unchecked")
     public <T> T copy(@NonNull T obj, @NonNull UUID destination) {
-        ICorfuSMR<T> proxy = (ICorfuSMR<T>)obj;
-        ObjectID oid = new ObjectID(destination, proxy.getCorfuSMRProxy().getObjectType());
+        ICorfuSMR<T> wrapper = (ICorfuSMR<T>)obj;
+        ObjectID oid = new ObjectID(destination, wrapper.getCorfuBuilder().getType());
         return (T) objectCache.computeIfAbsent(oid, x -> {
-            IStreamView sv = runtime.getStreamsView().copy(proxy.getCorfuStreamID(),
-                    destination, proxy.getCorfuSMRProxy().getVersion());
+            IStreamView sv = runtime.getStreamsView().copy(wrapper.getCorfuStreamID(),
+                    destination, wrapper.getObjectManager$CORFU().getVersion());
             try {
+                final ObjectBuilder<T> originalBuilder = (ObjectBuilder<T>)
+                        wrapper.getCorfuBuilder();
+                IObjectBuilder<T> builder = new ObjectBuilder(originalBuilder.getRuntime())
+                        .setArguments(originalBuilder.getArguments())
+                        .setType(originalBuilder.getType())
+                        .setSerializer(originalBuilder.getSerializer())
+                        .setStreamID(sv.getId());
+
                 return
-                        CorfuCompileWrapperBuilder.getWrapper(proxy.getCorfuSMRProxy()
-                                        .getObjectType(), runtime, sv.getId(), null,
-                                Serializers.JSON);
+                        CorfuCompileWrapperBuilder.getWrapper((ObjectBuilder)builder);
             } catch (Exception ex) {
                 throw new RuntimeException(ex);
             }

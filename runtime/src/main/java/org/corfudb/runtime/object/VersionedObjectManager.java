@@ -1,5 +1,7 @@
 package org.corfudb.runtime.object;
 
+import static java.lang.Math.min;
+
 import io.netty.util.internal.ConcurrentSet;
 
 import java.util.List;
@@ -13,23 +15,30 @@ import java.util.concurrent.locks.StampedLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
+import org.corfudb.runtime.exceptions.AbortCause;
+import org.corfudb.runtime.exceptions.NetworkException;
 import org.corfudb.runtime.exceptions.NoRollbackException;
+import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.object.transactions.AbstractTransaction;
+import org.corfudb.runtime.object.transactions.Transactions;
 import org.corfudb.runtime.object.transactions.WriteSetSmrStream;
 import org.corfudb.runtime.view.Address;
+import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
 
 //TODO Discard TransactionStream for building maps but not for constructing tails
 
 /**
- * The VersionLockedObject maintains a versioned object which is
+ * The VersionedObjectManager maintains a versioned object which is
  * backed by an ISMRStream, and is optionally backed by an additional
  * optimistic update stream.
  *
- * <p>Users of the VersionLockedObject cannot access the versioned object
+ * <p>Users of the VersionedObjectManager cannot access the versioned object
  * directly, rather they use the access() and update() methods to
  * read and manipulate the object.
  *
@@ -38,13 +47,13 @@ import org.corfudb.util.Utils;
  * by this object which inspect and manipulate the object state.
  *
  * <p>syncObjectUnsafe() enables the user to bring the object to a given version,
- * and the VersionLockedObject manages any sync or rollback of updates
+ * and the VersionedObjectManager manages any sync or rollback of updates
  * necessary.
  *
  * <p>Created by mwei on 11/13/16.
  */
 @Slf4j
-public class VersionLockedObject<T> {
+public class VersionedObjectManager<T> implements IObjectManager<T> {
 
     /**
      * The actual underlying object.
@@ -57,6 +66,119 @@ public class VersionLockedObject<T> {
      */
     final Set<Long> pendingUpcalls;
 
+    @Override
+    public IStateMachineEngine getEngine() {
+        if (Transactions.active()) {
+            return Transactions.current();
+        }
+
+        return builder.getRuntime().getDefaultEngine();
+    }
+
+    @Override
+    public long getVersion() {
+        return getVersionUnsafe();
+    }
+
+    void abortTransaction(Exception e) {
+        long snapshotTimestamp;
+        AbortCause abortCause;
+        TransactionAbortedException tae;
+
+        AbstractTransaction context = Transactions.current();
+
+        if (e instanceof TransactionAbortedException) {
+            tae = (TransactionAbortedException) e;
+        } else {
+            if (e instanceof NetworkException) {
+                // If a 'NetworkException' was received within a transactional context, an attempt to
+                // 'getSnapshotTimestamp' will also fail (as it requests it to the Sequencer).
+                // A new NetworkException would prevent the earliest to be propagated and encapsulated
+                // as a TransactionAbortedException.
+                snapshotTimestamp = -1L;
+                abortCause = AbortCause.NETWORK;
+            } else if (e instanceof UnsupportedOperationException) {
+                snapshotTimestamp = Transactions.getReadSnapshot();
+                abortCause = AbortCause.UNSUPPORTED;
+            } else {
+                log.error("abort[{}] Abort Transaction with Exception {}", this, e);
+                snapshotTimestamp = Transactions.getReadSnapshot();
+                abortCause = AbortCause.UNDEFINED;
+            }
+
+            TxResolutionInfo txInfo = new TxResolutionInfo(
+                    context.getTransactionID(), snapshotTimestamp);
+            // TODO: fix...
+            tae = new TransactionAbortedException(txInfo, null, UUID.randomUUID(),
+                    abortCause, e, context);
+            context.abort(tae);
+        }
+
+
+        // Discard the transaction chain, if present.
+        try {
+            Transactions.abort();
+        } catch (TransactionAbortedException e2) {
+            // discard manual abort
+        }
+
+        throw tae;
+    }
+
+    @Override
+    public <R> R txExecute(Supplier<R> txFunction) {
+        // Don't nest transactions if we are already running transactionally
+        if (Transactions.active()) {
+            try {
+                return txFunction.get();
+            } catch (Exception e) {
+                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
+                abortTransaction(e);
+            }
+        }
+        long sleepTime = 1L;
+        final long maxSleepTime = 1000L;
+        int retries = 1;
+        while (true) {
+            try {
+                builder.getRuntime().getObjectsView().TXBegin();
+                R ret = txFunction.get();
+                builder.getRuntime().getObjectsView().TXEnd();
+                return ret;
+            } catch (TransactionAbortedException e) {
+                // If TransactionAbortedException is due to a 'Network Exception' do not keep
+                // retrying a nested transaction indefinitely (this could go on forever).
+                // If this is part of an outer transaction abort and remove from context.
+                // Re-throw exception to client.
+                log.warn("TXExecute[{}] Abort with exception {}", this, e);
+                if (e.getAbortCause() == AbortCause.NETWORK) {
+                    if (Transactions.current() != null) {
+                        try {
+                            Transactions.abort();
+                        } catch (TransactionAbortedException tae) {
+                            // discard manual abort
+                        }
+                        throw e;
+                    }
+                }
+
+                log.debug("Transactional function aborted due to {}, retrying after {} msec",
+                        e, sleepTime);
+                try {
+                    Thread.sleep(sleepTime);
+                } catch (InterruptedException ie) {
+                    log.warn("TxExecuteInner retry sleep interrupted {}", ie);
+                }
+                sleepTime = min(sleepTime * 2L, maxSleepTime);
+                retries++;
+            } catch (Exception e) {
+                log.warn("TXExecute[{}] Abort with Exception: {}", this, e);
+                abortTransaction(e);
+            }
+        }
+    }
+
+
     // This enum is necessary because null cannot be inserted
     // into a ConcurrentHashMap.
     enum NullValue {
@@ -68,7 +190,6 @@ public class VersionLockedObject<T> {
      * requested.
      */
     final Map<Long, Object> upcallResults;
-
 
     /**
      * A lock, which controls access to modifications to
@@ -88,53 +209,35 @@ public class VersionLockedObject<T> {
     private WriteSetSmrStream optimisticStream;
 
     /**
-     * The upcall map for this object.
+     * The wrapper for this object.
      */
-    private final Map<String, ICorfuSMRUpcallTarget<T>> upcallTargetMap;
-
-    /**
-     * The undo record function map for this object.
-     */
-    private final Map<String, IUndoRecordFunction<T>> undoRecordFunctionMap;
-
-    /**
-     * The undo target map for this object.
-     */
-    private final Map<String, IUndoFunction<T>> undoFunctionMap;
-
-    /**
-     * The reset set for this object.
-     */
-    private final Set<String> resetSet;
+    private final ICorfuSMR<T> wrapper;
 
     /**
      * A function that generates a new instance of this object.
      */
     private final Supplier<T> newObjectFn;
 
+    @Getter
+    private final ObjectBuilder<T> builder;
+
     /**
-     * The VersionLockedObject maintains a versioned object which is backed by an ISMRStream,
+     * The VersionedObjectManager maintains a versioned object which is backed by an ISMRStream,
      * and is optionally backed by an additional optimistic update stream.
      *
      * @param newObjectFn       A function passed to instantiate a new instance of this object.
      * @param smrStream         Stream View backing this object.
-     * @param upcallTargets     UpCall map for this object.
-     * @param undoRecordTargets Undo record function map for this object.
-     * @param undoTargets       Undo functions map.
-     * @param resetSet          Reset set for this object.
+     * @param wrapper           The wrapper for this object.
      */
-    public VersionLockedObject(Supplier<T> newObjectFn,
-                               StreamViewSMRAdapter smrStream,
-                               Map<String, ICorfuSMRUpcallTarget<T>> upcallTargets,
-                               Map<String, IUndoRecordFunction<T>> undoRecordTargets,
-                               Map<String, IUndoFunction<T>> undoTargets,
-                               Set<String> resetSet) {
+    public VersionedObjectManager(Supplier<T> newObjectFn,
+                                  StreamViewSMRAdapter smrStream,
+                                  ICorfuSMR<T> wrapper,
+                                  ObjectBuilder<T> builder) {
+        this.builder = builder;
+
         this.smrStream = smrStream;
 
-        this.upcallTargetMap = upcallTargets;
-        this.undoRecordFunctionMap = undoRecordTargets;
-        this.undoFunctionMap = undoTargets;
-        this.resetSet = resetSet;
+        this.wrapper = wrapper;
 
         this.newObjectFn = newObjectFn;
         this.object = newObjectFn.get();
@@ -154,7 +257,8 @@ public class VersionLockedObject<T> {
      * allow the user to modify the state of the object before calling accessFunction.
      *
      * <p>directAccessCheckFunction is executed under an optimistic read lock. Read-only
-     * unsafe operations are permitted.
+     * unsafe operations are permitted. IMPORTANT: since the lock is optimistic, the check
+     * may see inconsistent state.
      *
      * <p>updateFunction is executed under a write lock. Both read and write unsafe operations
      * are permitted.
@@ -172,33 +276,33 @@ public class VersionLockedObject<T> {
      * @param <R>                       The type of the access function return.
      * @return Returns the access function.
      */
-    public <R> R access(Function<VersionLockedObject<T>, Boolean> directAccessCheckFunction,
-                        Consumer<VersionLockedObject<T>> updateFunction,
+    public <R> R access(Function<VersionedObjectManager<T>, Boolean> directAccessCheckFunction,
+                        Consumer<VersionedObjectManager<T>> updateFunction,
                         Function<T, R> accessFunction) {
         // First, we try to do an optimistic read on the object, in case it
         // meets the conditions for direct access.
         long ts = lock.tryOptimisticRead();
         if (ts != 0) {
-            if (directAccessCheckFunction.apply(this)) {
-                log.trace("Access [{}] Direct (optimistic-read) access at {}",
-                        this, getVersionUnsafe());
-                try {
+            try {
+                if (directAccessCheckFunction.apply(this)) {
+                    log.trace("Access [{}] Direct (optimistic-read) access at {}",
+                            this, getVersionUnsafe());
                     R ret = accessFunction.apply(object);
                     if (lock.validate(ts)) {
                         return ret;
                     }
-                } catch (Exception e) {
-                    // If we have an exception, we didn't get a chance to validate the the lock.
-                    // If it's still valid, then we should re-throw the exception since it was
-                    // on a correct view of the object.
-                    if (lock.validate(ts)) {
-                        throw e;
-                    }
-                    // Otherwise, it is not on a correct view of the object (the object was
-                    // modified) and we should try again by upgrading the lock.
-                    log.warn("Access [{}] Direct (optimistic-read) exception, upgrading lock",
-                            this);
                 }
+            } catch (Exception e) {
+                // If we have an exception, we didn't get a chance to validate the the lock.
+                // If it's still valid, then we should re-throw the exception since it was
+                // on a correct view of the object.
+                if (lock.validate(ts)) {
+                    throw e;
+                }
+                // Otherwise, it is not on a correct view of the object (the object was
+                // modified) and we should try again by upgrading the lock.
+                log.warn("Access [{}] Direct (optimistic-read) exception, upgrading lock",
+                        this);
             }
         }
         // Next, we just upgrade to a full write lock if the optimistic
@@ -236,7 +340,7 @@ public class VersionLockedObject<T> {
      * @param <R>            The type of the return of the updateFunction.
      * @return The return value of the update function.
      */
-    public <R> R update(Function<VersionLockedObject<T>, R> updateFunction) {
+    public <R> R update(Function<VersionedObjectManager<T>, R> updateFunction) {
         long ts = 0;
         try {
             ts = lock.writeLock();
@@ -377,9 +481,7 @@ public class VersionLockedObject<T> {
      * @return True, if the object was modified by this thread. False otherwise.
      */
     public boolean optimisticallyOwnedByThreadUnsafe() {
-        WriteSetSmrStream optimisticStream = this.optimisticStream;
-
-        return optimisticStream == null ? false : optimisticStream.isStreamForThisThread();
+        return optimisticStream != null && optimisticStream.isStreamForThisThread();
     }
 
     /**
@@ -463,13 +565,13 @@ public class VersionLockedObject<T> {
                 record.getSMRArguments(),
                 record.getUndoRecord());
         IUndoFunction<T> undoFunction =
-                undoFunctionMap.get(record.getSMRMethod());
+                wrapper.getCorfuUndoMap().get(record.getSMRMethod());
         // If the undo function exists, apply it.
         if (undoFunction != null) {
             undoFunction.doUndo(object, record.getUndoRecord(),
                     record.getSMRArguments());
             return;
-        } else if (resetSet.contains(record.getSMRMethod())) {
+        } else if (wrapper.getCorfuResetSet().contains(record.getSMRMethod())) {
             // If this is a reset, undo by restoring the
             // previous state.
             object = (T) record.getUndoRecord();
@@ -496,7 +598,7 @@ public class VersionLockedObject<T> {
                 entry.getEntry() != null ? entry.getEntry().getGlobalAddress() : "OPT",
                 entry.getSMRArguments());
 
-        ICorfuSMRUpcallTarget<T> target = upcallTargetMap.get(entry.getSMRMethod());
+        ICorfuSMRUpcallTarget<T> target = wrapper.getCorfuSMRUpcallMap().get(entry.getSMRMethod());
         if (target == null) {
             throw new RuntimeException("Unknown upcall " + entry.getSMRMethod());
         }
@@ -511,7 +613,7 @@ public class VersionLockedObject<T> {
         if (!entry.isUndoable() || entry.getEntry() == null) {
             // Can we generate an undo record?
             IUndoRecordFunction<T> undoRecordTarget =
-                    undoRecordFunctionMap
+                    wrapper.getCorfuUndoRecordMap()
                             .get(entry.getSMRMethod());
             // If there was no previously calculated undo entry
             if (undoRecordTarget != null) {
@@ -519,7 +621,7 @@ public class VersionLockedObject<T> {
                 entry.setUndoRecord(undoRecordTarget
                         .getUndoRecord(object, entry.getSMRArguments()));
                 log.trace("Apply[{}] Undo->{}", this, entry.getUndoRecord());
-            } else if (resetSet.contains(entry.getSMRMethod())) {
+            } else if (wrapper.getCorfuResetSet().contains(entry.getSMRMethod())) {
                 // This entry actually resets the object. So here
                 // we can safely get a new instance, and add the
                 // previous instance to the undo log.
@@ -642,4 +744,10 @@ public class VersionLockedObject<T> {
         seek(globalAddress + 1);
     }
 
+
+
+    /** {@inheritDoc} */
+    public Object[] getConflictFromEntry(String smrMethod, Object[] smrArguments) {
+        return wrapper.getCorfuEntryToConflictMap().get(smrMethod).getConflictSet(smrArguments);
+    }
 }

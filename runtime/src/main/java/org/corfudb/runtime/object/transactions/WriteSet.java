@@ -8,6 +8,7 @@ import lombok.Getter;
 
 import org.corfudb.protocols.logprotocol.MultiObjectSMREntry;
 import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.runtime.object.ICorfuSMR;
 import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
 
 /**
@@ -21,10 +22,10 @@ public class WriteSet extends ConflictSet {
     final MultiObjectSMREntry writeSet = new MultiObjectSMREntry();
 
 
-    public long add(ICorfuSMRProxyInternal proxy, SMREntry updateEntry, Object[] conflictObjects) {
-        super.add(proxy, conflictObjects);
-        writeSet.addTo(proxy.getStreamID(), updateEntry);
-        return writeSet.getSMRUpdates(proxy.getStreamID()).size() - 1;
+    public <T> long add(ICorfuSMR<T> wrapper, SMREntry updateEntry, Object[] conflictObjects) {
+        super.add(wrapper, conflictObjects);
+        writeSet.addTo(wrapper.getCorfuStreamID(), updateEntry);
+        return writeSet.getSMRUpdates(wrapper.getCorfuStreamID()).size() - 1;
     }
 
 }

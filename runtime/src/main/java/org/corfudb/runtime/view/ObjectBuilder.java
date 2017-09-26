@@ -19,6 +19,7 @@ import org.corfudb.runtime.object.CorfuCompileProxy;
 import org.corfudb.runtime.object.CorfuCompileWrapperBuilder;
 import org.corfudb.runtime.object.ICorfuSMR;
 import org.corfudb.runtime.object.IObjectBuilder;
+import org.corfudb.runtime.object.VersionedObjectManager;
 import org.corfudb.util.serializer.ISerializer;
 import org.corfudb.util.serializer.Serializers;
 
@@ -30,6 +31,7 @@ import org.corfudb.util.serializer.Serializers;
 @Slf4j
 public class ObjectBuilder<T> implements IObjectBuilder<T> {
 
+    @Getter
     final CorfuRuntime runtime;
 
     @Getter
@@ -52,10 +54,19 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
     @Setter(AccessLevel.NONE)
     Object[] arguments = new Object[0];
 
+    @Setter
+    @Getter
+    VersionedObjectManager<T> object;
+
     @SuppressWarnings("unchecked")
     public <R> ObjectBuilder<R> setType(Class<R> type) {
         this.type = (Class<T>) type;
         return (ObjectBuilder<R>) this;
+    }
+
+    @Override
+    public UUID getStreamId() {
+        return streamID;
     }
 
     @SuppressWarnings("unchecked")
@@ -99,14 +110,12 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
 
         try {
             if (options.contains(ObjectOpenOptions.NO_CACHE)) {
-                return CorfuCompileWrapperBuilder.getWrapper(type, runtime, streamID,
-                        arguments, serializer);
+                return CorfuCompileWrapperBuilder.getWrapper(this);
             } else {
                 ObjectsView.ObjectID<T> oid = new ObjectsView.ObjectID(streamID, type);
                 T result = (T) runtime.getObjectsView().objectCache.computeIfAbsent(oid, x -> {
                             try {
-                                return CorfuCompileWrapperBuilder.getWrapper(type, runtime,
-                                        streamID, arguments, serializer);
+                                return CorfuCompileWrapperBuilder.getWrapper(this);
                             } catch (Exception ex) {
                                 throw new RuntimeException(ex);
                             }
@@ -114,11 +123,10 @@ public class ObjectBuilder<T> implements IObjectBuilder<T> {
                 );
                 // Get object serializer to check if we didn't attempt to set another serializer
                 // to an already existing map
-                ISerializer objectSerializer = ((CorfuCompileProxy) ((ICorfuSMR) runtime.getObjectsView().
+                ISerializer objectSerializer = ((ObjectBuilder)
+                        ((ICorfuSMR) runtime.getObjectsView().
                         getObjectCache().
-                        get(oid)).
-                        getCorfuSMRProxy())
-                        .getSerializer();
+                        get(oid)).getObjectManager$CORFU().getBuilder()).getSerializer();
 
                 // FIXME: temporary hack until we have a registry
                 // If current map in cache has no indexer, or there is currently an other one,

@@ -30,6 +30,8 @@ import org.corfudb.runtime.clients.LogUnitClient;
 import org.corfudb.runtime.clients.ManagementClient;
 import org.corfudb.runtime.clients.NettyClientRouter;
 import org.corfudb.runtime.clients.SequencerClient;
+import org.corfudb.runtime.object.IStateMachineEngine;
+import org.corfudb.runtime.object.LinearizableEngine;
 import org.corfudb.runtime.view.AddressSpaceView;
 import org.corfudb.runtime.view.Layout;
 import org.corfudb.runtime.view.LayoutView;
@@ -63,6 +65,9 @@ public class CorfuRuntime {
         /** Number of times to attempt to read before hole filling. */
         int holeFillRetry = 10;
     }
+
+    @Getter
+    public IStateMachineEngine defaultEngine = new LinearizableEngine(this);
 
     @Getter
     private final CorfuRuntimeParameters parameters = new CorfuRuntimeParameters();

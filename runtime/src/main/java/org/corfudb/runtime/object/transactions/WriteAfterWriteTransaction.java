@@ -3,6 +3,7 @@ package org.corfudb.runtime.object.transactions;
 import lombok.extern.slf4j.Slf4j;
 
 import org.corfudb.protocols.logprotocol.SMREntry;
+import org.corfudb.runtime.object.ICorfuSMR;
 import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
 
 /** A write-after-write transactional context.
@@ -30,7 +31,7 @@ public class WriteAfterWriteTransaction
     }
 
     @Override
-    protected <T> long addToWriteSet(ICorfuSMRProxyInternal<T> proxy,
+    protected <T> long addToWriteSet(ICorfuSMR<T> proxy,
                                      SMREntry updateEntry,
                                      Object[] conflictObject) {
         Transactions.getContext().getConflictSet().add(proxy, conflictObject);

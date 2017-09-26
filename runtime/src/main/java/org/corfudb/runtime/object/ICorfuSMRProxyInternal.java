@@ -19,7 +19,7 @@ public interface ICorfuSMRProxyInternal<T> extends ICorfuSMRProxy<T> {
      * Directly get the state of the object the proxy is managing,
      * without causing a sync.
      */
-    VersionLockedObject<T> getUnderlyingObject();
+    VersionedObjectManager<T> getUnderlyingObject();
 
     /**
      * Get the serializer used for serializing arguments in the

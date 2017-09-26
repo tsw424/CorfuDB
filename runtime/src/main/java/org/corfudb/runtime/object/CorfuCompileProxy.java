@@ -2,31 +2,22 @@ package org.corfudb.runtime.object;
 
 import static java.lang.Long.min;
 
-import com.codahale.metrics.Counter;
-import com.codahale.metrics.MetricRegistry;
-import com.codahale.metrics.Timer;
-
 import java.lang.reflect.Constructor;
 import java.util.Collections;
-import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.protocols.wireprotocol.TxResolutionInfo;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.exceptions.AbortCause;
 import org.corfudb.runtime.exceptions.NetworkException;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
-import org.corfudb.runtime.exceptions.TrimmedException;
-import org.corfudb.runtime.exceptions.TrimmedUpcallException;
 import org.corfudb.runtime.object.transactions.AbstractTransaction;
 import org.corfudb.runtime.object.transactions.Transactions;
-import org.corfudb.util.MetricsUtils;
+import org.corfudb.runtime.view.ObjectBuilder;
 import org.corfudb.util.Utils;
 import org.corfudb.util.serializer.ISerializer;
 
@@ -62,13 +53,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
      * multi-threaded context.
      */
     @Getter
-    VersionLockedObject<T> underlyingObject;
-
-    /**
-     * The CorfuRuntime. This allows us to interact with the
-     * Corfu log.
-     */
-    CorfuRuntime rt;
+    final VersionedObjectManager<T> underlyingObject;
 
     /**
      * The ID of the stream of the log.
@@ -90,52 +75,36 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     @Getter
     ISerializer serializer;
 
-    /** A map from method names to their corresponding conflict
-     * functions.
+    /** The wrapper this proxy was created with.
+     *
      */
-    @Getter
-    Map<String, IConflictFunction> conflictFunctionMap;
-
-    /**
-     * The arguments this proxy was created with.
-     */
-    final Object[] args;
+    final ICorfuSMR<T> wrapper;
 
     /**
      * Creates a CorfuCompileProxy object on a particular stream.
      *
-     * @param rt                  Connected CorfuRuntime instance.
-     * @param streamID            StreamID of the log.
-     * @param type                Type of underlying object to instantiate a new instance.
-     * @param args                Arguments to create this proxy.
-     * @param serializer          Serializer used by the SMR entries to serialize the arguments.
-     * @param upcallTargetMap     upCallTargetMap
-     * @param undoTargetMap       undoTargetMap
-     * @param undoRecordTargetMap undoRecordTargetMap
-     * @param resetSet            resetSet
+     * @param wrapper             The wrapper for this object.
      */
     @Deprecated // TODO: Add replacement method that conforms to style
     @SuppressWarnings("checkstyle:abbreviation") // Due to deprecation
-    public CorfuCompileProxy(CorfuRuntime rt, UUID streamID, Class<T> type, Object[] args,
-                             ISerializer serializer,
-                             Map<String, ICorfuSMRUpcallTarget<T>> upcallTargetMap,
-                             Map<String, IUndoFunction<T>> undoTargetMap,
-                             Map<String, IUndoRecordFunction<T>> undoRecordTargetMap,
-                             Map<String, IConflictFunction> conflictFunctionMap,
-                             Set<String> resetSet
-    ) {
-        this.rt = rt;
-        this.streamID = streamID;
-        this.type = type;
-        this.args = args;
-        this.serializer = serializer;
-        this.conflictFunctionMap = conflictFunctionMap;
+    public CorfuCompileProxy(ICorfuSMR<T> wrapper) {
+        this.streamID = wrapper.getCorfuBuilder().getStreamId();
+        this.type = wrapper.getCorfuBuilder().getType();
+        this.serializer = ((ObjectBuilder<T>)wrapper.getCorfuBuilder()).getSerializer();
 
-        underlyingObject = new VersionLockedObject<T>(this::getNewInstance,
-                new StreamViewSMRAdapter(rt, rt.getStreamsView().get(streamID)),
-                upcallTargetMap, undoRecordTargetMap,
-                undoTargetMap, resetSet);
+        this.wrapper = wrapper;
+        this.underlyingObject = (VersionedObjectManager) wrapper.getObjectManager$CORFU();
+
     }
+
+    static private <T> CorfuRuntime getRuntimeFromWrapper(ICorfuSMR<T> wrapper) {
+        return ((ObjectBuilder<T>) wrapper.getCorfuBuilder()).getRuntime();
+    }
+
+    static private <T> Object[] getArgumentsFromWrapper(ICorfuSMR<T> wrapper) {
+        return ((ObjectBuilder<T>) wrapper.getCorfuBuilder()).getArguments();
+    }
+
 
     /**
      * {@inheritDoc}
@@ -143,39 +112,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     @Override
     public <R> R access(ICorfuSMRAccess<R, T> accessMethod,
                         Object[] conflictObject) {
-        if (Transactions.active()) {
-            try {
-                return Transactions.current()
-                        .access(this, accessMethod, conflictObject);
-            } catch (Exception e) {
-                log.error("Access[{}] Exception: {}", this, e);
-                this.abortTransaction(e);
-            }
-        }
-
-        // Linearize this read against a timestamp
-        final long timestamp =
-                rt.getSequencerView()
-                        .nextToken(Collections.singleton(streamID), 0).getToken()
-                        .getTokenValue();
-        log.debug("Access[{}] conflictObj={} version={}", this, conflictObject, timestamp);
-
-        // Perform underlying access
-        try {
-            return underlyingObject.access(o -> o.getVersionUnsafe() >= timestamp
-                            && !o.isOptimisticallyModifiedUnsafe(),
-                    o -> o.syncObjectUnsafe(timestamp),
-                    o -> accessMethod.access(o));
-        } catch (TrimmedException te) {
-            log.warn("Access[{}] Encountered Trim, reset and retry", this);
-            // We encountered a TRIM during sync, reset the object
-            underlyingObject.update(o -> {
-                o.resetUnsafe();
-                return null;
-            });
-            // And attempt an access again.
-            return access(accessMethod, conflictObject);
-        }
+        throw new RuntimeException("Shouldn't be here");
     }
 
     /**
@@ -184,27 +121,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     @Override
     public long logUpdate(String smrUpdateFunction, final boolean keepUpcallResult,
                           Object[] conflictObject, Object... args) {
-        // If we aren't coming from a transactional context,
-        // redirect us to a transactional context first.
-        if (Transactions.active()) {
-            try {
-                // We generate an entry to avoid exposing the serializer to the tx context.
-                SMREntry entry = new SMREntry(smrUpdateFunction, args, serializer);
-                return Transactions.current()
-                        .logUpdate(this, entry, conflictObject);
-            } catch (Exception e) {
-                log.warn("Update[{}] Exception: {}", this, e);
-                this.abortTransaction(e);
-            }
-        }
-
-        // If we aren't in a transaction, we can just write the modification.
-        // We need to add the acquired token into the pending upcall list.
-        SMREntry smrEntry = new SMREntry(smrUpdateFunction, args, serializer);
-        long address = underlyingObject.logUpdate(smrEntry, keepUpcallResult);
-        log.trace("Update[{}] {}@{} ({}) conflictObj={}",
-                this, smrUpdateFunction, address, args, conflictObject);
-        return address;
+        throw new RuntimeException("Shouldn't be here");
     }
 
     /**
@@ -212,50 +129,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
      */
     @Override
     public <R> R getUpcallResult(long timestamp, Object[] conflictObject) {
-
-        // If we aren't coming from a transactional context,
-        // redirect us to a transactional context first.
-        if (Transactions.active()) {
-            try {
-                return (R) Transactions.current()
-                        .getUpcallResult(this, timestamp, conflictObject);
-            } catch (Exception e) {
-                log.warn("UpcallResult[{}] Exception: {}", this, e);
-                this.abortTransaction(e);
-            }
-        }
-
-        // Check first if we have the upcall, if we do
-        // we can service the request right away.
-        if (underlyingObject.upcallResults.containsKey(timestamp)) {
-            log.trace("Upcall[{}] {} Direct", this, timestamp);
-            R ret = (R) underlyingObject.upcallResults.get(timestamp);
-            underlyingObject.upcallResults.remove(timestamp);
-            return ret == VersionLockedObject.NullValue.NULL_VALUE ? null : ret;
-        }
-
-        try {
-            return underlyingObject.update(o -> {
-                o.syncObjectUnsafe(timestamp);
-                if (o.upcallResults.containsKey(timestamp)) {
-                    log.trace("Upcall[{}] {} Sync'd", this, timestamp);
-                    R ret = (R) o.upcallResults.get(timestamp);
-                    o.upcallResults.remove(timestamp);
-                    return ret == VersionLockedObject.NullValue.NULL_VALUE ? null : ret;
-                }
-
-                // The version is already ahead, but we don't have the result.
-                // The only way to get the correct result
-                // of the upcall would be to rollback. For now, we throw an exception
-                // since this is generally not expected. --- and probably a bug if it happens.
-                throw new RuntimeException("Attempted to get the result "
-                        + "of an upcall@" + timestamp + " but we are @"
-                        + underlyingObject.getVersionUnsafe()
-                        + " and we don't have a copy");
-            });
-        } catch (TrimmedException ex) {
-            throw new TrimmedUpcallException(timestamp);
-        }
+        throw new RuntimeException("Shouldn't be here");
     }
 
     /**
@@ -265,7 +139,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     public void sync() {
         // Linearize this read against a timestamp
         final long timestamp =
-                rt.getSequencerView()
+                getRuntimeFromWrapper(wrapper).getSequencerView()
                         .nextToken(Collections.singleton(streamID), 0).getToken()
                         .getTokenValue();
 
@@ -310,9 +184,9 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
         int retries = 1;
         while (true) {
             try {
-                rt.getObjectsView().TXBegin();
+                getRuntimeFromWrapper(wrapper).getObjectsView().TXBegin();
                 R ret = txFunction.get();
-                rt.getObjectsView().TXEnd();
+                getRuntimeFromWrapper(wrapper).getObjectsView().TXEnd();
                 return ret;
             } catch (TransactionAbortedException e) {
                 // If TransactionAbortedException is due to a 'Network Exception' do not keep
@@ -354,7 +228,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
      */
     @Override
     public IObjectBuilder<?> getObjectBuilder() {
-        return rt.getObjectsView().build();
+        return getRuntimeFromWrapper(wrapper).getObjectsView().build();
     }
 
     /**
@@ -378,12 +252,6 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
                 null);
     }
 
-    /** {@inheritDoc} */
-    @Override
-    public Object[] getConflictFromEntry(String smrMethod, Object[] smrArguments) {
-        return getConflictFunctionMap().get(smrMethod).getConflictSet(smrArguments);
-    }
-
     /**
      * Get a new instance of the real underlying object.
      *
@@ -393,14 +261,15 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     private T getNewInstance() {
         try {
             T ret = null;
-            if (args == null || args.length == 0) {
+            if (getArgumentsFromWrapper(wrapper) == null ||
+                    getArgumentsFromWrapper(wrapper).length == 0) {
                 ret = type.newInstance();
             } else {
                 // This loop is not ideal, but the easiest way to get around Java boxing,
                 // which results in primitive constructors not matching.
                 for (Constructor<?> constructor : type.getDeclaredConstructors()) {
                     try {
-                        ret = (T) constructor.newInstance(args);
+                        ret = (T) constructor.newInstance(getArgumentsFromWrapper(wrapper));
                         break;
                     } catch (Exception e) {
                         // just keep trying until one works.
@@ -408,7 +277,7 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
                 }
             }
             if (ret instanceof ICorfuSMRProxyWrapper) {
-                ((ICorfuSMRProxyWrapper<T>) ret).setProxy$CORFUSMR(this);
+                ((ICorfuSMRProxyWrapper<T>) ret).setProxy$CORFU(this);
             }
             return ret;
         } catch (InstantiationException | IllegalAccessException e) {

@@ -1,9 +1,9 @@
 package org.corfudb.runtime.object.transactions;
 
-import org.corfudb.protocols.logprotocol.SMREntry;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
+import org.corfudb.runtime.object.ICorfuSMR;
 import org.corfudb.runtime.object.ICorfuSMRAccess;
-import org.corfudb.runtime.object.ICorfuSMRProxyInternal;
+import org.corfudb.runtime.object.VersionedObjectManager;
 
 /**
  * A snapshot transactional context.
@@ -28,47 +28,40 @@ public class SnapshotTransaction extends AbstractTransaction {
      * {@inheritDoc}
      */
     @Override
-    public <R, T> R access(ICorfuSMRProxyInternal<T> proxy,
+    public <R, T> R access(ICorfuSMR<T> wrapper,
                            ICorfuSMRAccess<R, T> accessFunction,
                            Object[] conflictObject) {
 
         // In snapshot transactions, there are no conflicts.
         // Hence, we do not need to add this access to a conflict set
         // do not add: addToReadSet(proxy, conflictObject);
-        return proxy.getUnderlyingObject().access(o -> o.getVersionUnsafe()
+        return ((VersionedObjectManager<T>)wrapper.getObjectManager$CORFU())
+                    .access(o -> o.getVersionUnsafe()
                         == builder.getSnapshot()
                         && !o.isOptimisticallyModifiedUnsafe(),
                 o -> {
-                    syncWithRetryUnsafe(o, builder.getSnapshot(), proxy, null);
+                    syncWithRetryUnsafe(o, builder.getSnapshot(), wrapper, null);
                 },
                 o -> accessFunction.access(o));
     }
 
     /**
-     * Get the result of an upcall.
-     *
-     * @param proxy     The proxy to retrieve the upcall for.
-     * @param timestamp The timestamp to return the upcall for.
-     * @return The result of the upcall.
+     * {@inheritDoc}
      */
     @Override
-    public <T> Object getUpcallResult(ICorfuSMRProxyInternal<T> proxy,
+    public <T, R> R getUpcallResult(ICorfuSMR<T> wrapper,
                                       long timestamp,
                                       Object[] conflictObject) {
         throw new UnsupportedOperationException("Can't get upcall during a read-only transaction!");
     }
 
     /**
-     * Log an SMR update to the Corfu log.
-     *
-     * @param proxy       The proxy which generated the update.
-     * @param updateEntry The entry which we are writing to the log.
-     * @return The address the update was written at.
+     * {@inheritDoc}
      */
     @Override
-    public <T> long logUpdate(ICorfuSMRProxyInternal<T> proxy,
-                              SMREntry updateEntry,
-                              Object[] conflictObject) {
+    public <T> long logUpdate(ICorfuSMR<T> wrapper,
+                              String smrUpdateFunction, boolean keepUpcallResult,
+                              Object[] conflictObject, Object... args) {
         throw new UnsupportedOperationException(
                 "Can't modify object during a read-only transaction!");
     }

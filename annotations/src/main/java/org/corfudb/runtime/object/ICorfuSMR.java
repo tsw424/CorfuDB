@@ -11,7 +11,7 @@ import java.util.UUID;
 public interface ICorfuSMR<T> {
 
     /** The suffix for all precompiled SMR wrapper classes. */
-    String CORFUSMR_SUFFIX = "$CORFUSMR";
+    String CORFUSMR_SUFFIX = "$CORFU";
 
     /** Get the proxy for this wrapper, to manage the state of the object.
      * @return The proxy for this wrapper. */
@@ -47,6 +47,25 @@ public interface ICorfuSMR<T> {
     /** Return the stream ID that this object belongs to.
      * @return The stream ID this object belongs to. */
     default UUID getCorfuStreamID() {
-        return getCorfuSMRProxy().getStreamID();
+        return getObjectManager$CORFU().getBuilder().getStreamId();
+    }
+
+    /** Get the object builder used to generate this wrapper.
+     * @return An object builder for this wrapper.
+     */
+    default IObjectBuilder<T> getCorfuBuilder() {
+        return getObjectManager$CORFU().getBuilder();
+    }
+
+    /** Get the object manager for this wrapper.
+     * @return An object manager for this wrapper.
+     */
+    IObjectManager<T> getObjectManager$CORFU();
+
+    /** Get a state machine engine.
+     * @return
+     * */
+    default IStateMachineEngine getEngine$CORFU() {
+        return getObjectManager$CORFU().getEngine();
     }
 }
