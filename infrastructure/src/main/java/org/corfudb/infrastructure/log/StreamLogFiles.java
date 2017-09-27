@@ -1000,7 +1000,10 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
     }
 
     public void resetSegmentHandler(String filePath) {
-        writeChannels.remove(filePath).close();
+        SegmentHandle sh = writeChannels.remove(filePath);
+        if (sh != null) {
+            sh.close();
+        }
     }
 
     @Override
@@ -1042,6 +1045,20 @@ public class StreamLogFiles implements StreamLog, StreamLogWithRankedAddressSpac
         public Collection<LogEntry> getEntries() {
             return entries;
         }
+    }
+
+    public Set<Long> getKnownAddressesInRange(long startAddress, long endAddress) {
+
+        long startSegment = startAddress / RECORDS_PER_LOG_FILE;
+        long endSegment = endAddress / RECORDS_PER_LOG_FILE;
+
+        Set<Long> knownAddressSet = new HashSet<>();
+        for (long segmentIndex = startSegment; segmentIndex <= endSegment; segmentIndex++) {
+            String filePath = logDir + File.separator + segmentIndex + ".log";
+            knownAddressSet.addAll(writeChannels.get(filePath).knownAddresses.keySet());
+        }
+
+        return knownAddressSet;
     }
 
     /**

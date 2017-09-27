@@ -228,6 +228,13 @@ public class LogUnitClient implements IClient {
         return msg.getPayload();
     }
 
+    @ClientHandler(type = CorfuMsgType.KNOWN_ADDRESS_RESPONSE)
+    private static Object handleKnownAddressSetResponse(CorfuPayloadMsg<Set<Long>> msg,
+                                                        ChannelHandlerContext ctx,
+                                                        IClientRouter r) {
+        return msg.getPayload();
+    }
+
     /**
      * Asynchronously write to the logging unit.
      *
@@ -441,5 +448,10 @@ public class LogUnitClient implements IClient {
     public CompletableFuture<Boolean> replicateSegment(FileSegmentReplicationRequest msg) {
         return router.sendMessageAndGetCompletable(
                 CorfuMsgType.SEGMENT_REPLICATION.payloadMsg(msg));
+    }
+
+    public CompletableFuture<Set<Long>> requestKnownAddressSet(long startAddress, long endAddress) {
+        return router.sendMessageAndGetCompletable(CorfuMsgType.KNOWN_ADDRESS_REQUEST.payloadMsg(
+                new KnownAddressSetRequest(startAddress, endAddress)));
     }
 }

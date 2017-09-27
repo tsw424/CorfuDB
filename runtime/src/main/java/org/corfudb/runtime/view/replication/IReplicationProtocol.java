@@ -133,7 +133,7 @@ public interface IReplicationProtocol {
                 .collect(Collectors.toMap(r -> r.getKey(), r -> r.getValue()));
     }
 
-    default CompletableFuture<Boolean> replicateSegment(String filePath, int segmentStart,
+    default boolean replicateSegment(String filePath, int segmentStart,
                                                         int segmentEnd,
                                                         LogUnitClient logUnitClient) {
         throw new UnsupportedOperationException("Add node not implemented");

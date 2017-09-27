@@ -284,18 +284,17 @@ public class LogUnitServer extends AbstractServer {
     private void replicateSegment(CorfuPayloadMsg<FileSegmentReplicationRequest> msg,
                                   ChannelHandlerContext ctx, IServerRouter r,
                                   boolean isMetricsEnabled) {
+        // Add error "not supported" for in memory corfu log unit server.
+        FileSegmentReplicationRequest request = msg.getPayload();
         try {
-            int segmentIndex = msg.getPayload().getFileSegmentIndex();
-            byte[] fileBuffer = msg.getPayload().getFileBuffer();
-
             String filePath = opts.get("--log-path") + File.separator + "log"
-                    + File.separator + segmentIndex + ".log";
+                    + File.separator + request.getFileSegmentIndex() + ".log";
             File replicatedFile = new File(filePath);
             boolean result = replicatedFile.createNewFile();
             assert result;
 
             try (FileOutputStream fos = new FileOutputStream(replicatedFile)) {
-                fos.write(fileBuffer);
+                fos.write(request.getFileBuffer());
                 fos.close();
             }
 
@@ -309,6 +308,18 @@ public class LogUnitServer extends AbstractServer {
             e.printStackTrace();
             r.sendResponse(ctx, msg, CorfuMsgType.NACK.msg());
         }
+    }
+
+    @ServerHandler(type = CorfuMsgType.KNOWN_ADDRESS_REQUEST, opTimer = metricsPrefix
+            + "knownAddressRequest")
+    private void getKnownAddresses(CorfuPayloadMsg<KnownAddressSetRequest> msg,
+                                   ChannelHandlerContext ctx, IServerRouter r,
+                                   boolean isMetricsEnabled) {
+        KnownAddressSetRequest request = msg.getPayload();
+        r.sendResponse(ctx, msg, CorfuMsgType.KNOWN_ADDRESS_RESPONSE
+                .payloadMsg(((StreamLogFiles) streamLog)
+                        .getKnownAddressesInRange(request.getStartAddress(),
+                                request.getEndAddress())));
     }
 
 

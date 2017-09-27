@@ -9,17 +9,20 @@ import lombok.Data;
 @AllArgsConstructor
 public class FileSegmentReplicationRequest implements ICorfuPayload<FileSegmentReplicationRequest> {
 
-    private int fileSegmentIndex;
+    private long fileSegmentIndex;
     private byte[] fileBuffer;
+    private boolean inProgress;
 
     public FileSegmentReplicationRequest(ByteBuf buf) {
-        fileSegmentIndex = ICorfuPayload.fromBuffer(buf, Integer.class);
+        fileSegmentIndex = ICorfuPayload.fromBuffer(buf, Long.class);
         fileBuffer = ICorfuPayload.fromBuffer(buf, byte[].class);
+        inProgress = ICorfuPayload.fromBuffer(buf, Boolean.class);
     }
 
     @Override
     public void doSerialize(ByteBuf buf) {
         ICorfuPayload.serialize(buf, fileSegmentIndex);
         ICorfuPayload.serialize(buf, fileBuffer);
+        ICorfuPayload.serialize(buf, inProgress);
     }
 }

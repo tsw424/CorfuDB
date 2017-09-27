@@ -7,6 +7,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Constructor;
+import java.util.Set;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -92,6 +93,8 @@ public enum CorfuMsgType {
     MERGE_SEGMENTS_REQUEST(78, TypeToken.of(CorfuMsg.class)),
 
     SEGMENT_REPLICATION(80, new TypeToken<CorfuPayloadMsg<FileSegmentReplicationRequest>>() {}),
+    KNOWN_ADDRESS_REQUEST(81, new TypeToken<CorfuPayloadMsg<KnownAddressSetRequest>>() {}),
+    KNOWN_ADDRESS_RESPONSE(82, new TypeToken<CorfuPayloadMsg<Set<Long>>>() {}),
 
     ERROR_SERVER_EXCEPTION(200, new TypeToken<CorfuPayloadMsg<ExceptionMsg>>() {}, true)
     ;
